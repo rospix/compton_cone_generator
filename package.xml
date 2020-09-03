@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>compton_cone_generator</name>
+  <version>0.0.0</version>
+  <description>Cone generator package</description>
+
+  <maintainer email="tomas.baca@fel.cvut.cz">Tomas Baca</maintainer>
+
+  <license>TODO</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>message_generation</depend> 
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>nodelet</depend>
+  <depend>roscpp</depend>
+  <depend>message_runtime</depend>
+  <depend>gazebo_rad_msgs</depend>
+  <depend>mrs_lib</depend>
+  <depend>dynamic_reconfigure</depend>
+
+  <export>
+    <nodelet plugin="${prefix}/nodelets.xml" />
+  </export>
+
+</package>

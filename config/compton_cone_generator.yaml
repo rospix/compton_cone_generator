@@ -1,0 +1,2 @@
+sensor_thickness: 0.002 # [mm]
+time_constant: 0.000000086 # [mm]
