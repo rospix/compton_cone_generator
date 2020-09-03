@@ -8,9 +8,6 @@ find_package(Eigen3 REQUIRED)
 set(Eigen_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIRS})
 set(Eigen_LIBRARIES ${Eigen_LIBRARIES})
 
-## Find catkin macros and libraries
-## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
-## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   rospy
   roscpp
@@ -19,7 +16,9 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   nodelet
   cmake_modules
-  gazebo_rad_msgs
+  rad_msgs
+  mrs_msgs
+  radiation_utils
   mrs_lib
   dynamic_reconfigure
   message_generation
@@ -30,16 +29,11 @@ generate_dynamic_reconfigure_options(
   )
 
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES gdax_interface
-   CATKIN_DEPENDS nodelet rospy std_msgs message_runtime gazebo_rad_msgs mrs_lib
+   CATKIN_DEPENDS nodelet rospy std_msgs message_runtime rad_msgs mrs_lib radiation_utils mrs_msgs
    LIBRARIES ComptonConeGenerator
    DEPENDS Eigen
 )
 
-## Specify additional locations of header files
-## Your package locations should be listed before other locations
-# include_directories(include)
 include_directories(
   ${catkin_INCLUDE_DIRS}
   ${Eigen_INCLUDE_DIRS}
@@ -47,6 +41,10 @@ include_directories(
   )
 
 add_library(ComptonConeGenerator src/compton_cone_generator.cpp)
+
+target_link_libraries(ComptonConeGenerator
+  ${catkin_LIBRARIES}
+  )
 
 add_dependencies(ComptonConeGenerator
   ${${PROJECT_NAME}_EXPORTED_TARGETS}

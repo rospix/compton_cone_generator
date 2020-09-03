@@ -1,5 +1,5 @@
 <library path="lib/libComptonConeGenerator">
-  <class name="compton_camera_filter/ComptonConeGenerator" type="compton_camera_filter::ComptonConeGenerator" base_class_type="nodelet::Nodelet">
+  <class name="compton_cone_generator/ComptonConeGenerator" type="compton_cone_generator::ComptonConeGenerator" base_class_type="nodelet::Nodelet">
     <description>ComptonConeGenerator nodelet</description>
   </class>
 </library>

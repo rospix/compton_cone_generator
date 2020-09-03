@@ -3,101 +3,113 @@
 #include <ros/ros.h>
 #include <nodelet/nodelet.h>
 
-#include <gazebo_rad_msgs/Cone.h>
+#include <rad_msgs/Cone.h>
+#include <rad_msgs/ClusterList.h>
 
 #include <Eigen/Eigen>
 
 #include <mrs_lib/param_loader.h>
-#include <mrs_lib/lkf_legacy.h>
 #include <mrs_lib/geometry_utils.h>
 #include <mrs_lib/mutex.h>
+#include <mrs_lib/transformer.h>
+#include <mrs_lib/attitude_converter.h>
+#include <mrs_lib/batch_visualizer.h>
 
-#include <g/compton_cone_generatorConfig.h>
+#include <geometry_msgs/Vector3Stamped.h>
+
+#include <radiation_utils/physics.h>
 
 #include <dynamic_reconfigure/server.h>
+#include <compton_cone_generator/compton_cone_generatorConfig.h>
 
 //}
 
-namespace compton_camera_filter
+namespace compton_cone_generator
 {
 
 /* ComptonConeGenerator //{ */
+
 class ComptonConeGenerator : public nodelet::Nodelet {
 
 public:
   virtual void onInit();
 
-private:
   ros::NodeHandle nh_;
-  bool            is_initialized = false;
+  bool            is_initialized_ = false;
 
-  std::string uav_name_;
+  mrs_lib::Transformer transformer_;
 
-  ros::Publisher publisher_pose_2D;
-  ros::Publisher publisher_pose_3D;
+  mrs_lib::BatchVisualizer batch_vizualizer_;
 
-  ros::ServiceClient service_client_search;
-  ros::ServiceClient service_client_reset;
+  // | ------------------------- params ------------------------- |
 
-private:
-  ros::Subscriber subscriber_cone;
-  void            callbackCone(const gazebo_rad_msgs::ConeConstPtr &msg);
-  ros::Time       cone_last_time;
-  std::mutex      mutex_cone_last_time;
-  double          no_cone_timeout_;
+  std::string _uav_name_;
+  double      _sensor_thickness_;
+  double      _time_constant_;
+  double      _pixel_pitch_;
+  std::string _compton_camera_frame_;
+  std::string _world_frame_;
 
-private:
-  ros::Subscriber subscriber_optimizer;
-  void            callbackOptimizer(const geometry_msgs::PoseWithCovarianceStampedConstPtr &msg);
-  bool            got_optimizer = false;
-  std::mutex      mutex_optimizer;
+  // | ----------------------- subscribers ---------------------- |
 
-  geometry_msgs::PoseWithCovarianceStamped optimizer;
+  ros::Subscriber subscriber_cluster_list_;
+  void            callbackClusterList(const rad_msgs::ClusterListConstPtr &msg);
 
-private:
-  ros::Timer main_timer;
-  int        main_timer_rate_;
+  // | ----------------------- publishers ----------------------- |
+
+  ros::Publisher publisher_cones_;
+
+  // | ----------------------- main timer ----------------------- |
+
+  ros::Timer main_timer_;
+  int        _main_timer_rate_;
   void       mainTimer(const ros::TimerEvent &event);
 
-private:
-  bool kalman_initialized = false;
+  // | --------------- dynamic reconfigure server --------------- |
 
-  Eigen::MatrixXd A_2D_, B_2D_, P_2D_, Q_2D_, R_2D_;
-  double          n_states_2D_, n_inputs_2D_, n_measurements_2D_;
-  mrs_lib::Lkf *  lkf_2D;
-  std::mutex      mutex_lkf_2D;
+  boost::recursive_mutex                                       drs_mutex_;
+  typedef compton_cone_generator::compton_cone_generatorConfig drs_config_t;
+  typedef dynamic_reconfigure::Server<drs_config_t>            Drs_t;
+  boost::shared_ptr<Drs_t>                                     reconfigure_server_;
+  void                                                         callbackDrs(compton_cone_generator::compton_cone_generatorConfig &drs_config_t, uint32_t level);
 
-  Eigen::MatrixXd initial_covariance_2D_;
+  compton_cone_generator::compton_cone_generatorConfig drs_params_;
+  std::mutex                                           mutex_params_;
 
-private:
-  Eigen::MatrixXd A_3D_, B_3D_, P_3D_, Q_3D_, R_3D_;
-  double          n_states_3D_, n_inputs_3D_, n_measurements_3D_;
-  mrs_lib::Lkf *  lkf_3D;
-  std::mutex      mutex_lkf_3D;
-  Eigen::MatrixXd initial_state_3D_;
+  // | ------------------------ routines ------------------------ |
 
-  Eigen::MatrixXd initial_covariance_3D_;
-
-  double max_projection_error_;
-
-private:
-  // --------------------------------------------------------------
-  // |                     dynamic reconfigure                    |
-  // --------------------------------------------------------------
-
-  double q_2D_, r_2D_;
-  double q_3D_, r_3D_;
-
-  boost::recursive_mutex                              config_mutex_;
-  typedef compton_camera_filter::compton_filterConfig Config;
-  typedef dynamic_reconfigure::Server<Config>         ReconfigureServer;
-  boost::shared_ptr<ReconfigureServer>                reconfigure_server_;
-  void                                                drs_callback(compton_camera_filter::compton_filterConfig &config, uint32_t level);
-  compton_camera_filter::compton_filterConfig         drs_compton_filter;
-
-  void       dynamicReconfigureCallback(compton_camera_filter::compton_filterConfig &config, uint32_t level);
-  std::mutex mutex_drs;
+  std::optional<double> getComptonAngle(const double _ee, const double _ef);
 };
+//}
+
+/* class SingleEvent //{ */
+
+class SingleEvent {
+
+public:
+  SingleEvent(double toa, double energy, double x, double y);
+
+  double toa;
+  double energy;
+  double x;
+  double y;
+
+  bool operator<(const SingleEvent &other);
+};
+
+// constructor
+SingleEvent::SingleEvent(double toa, double energy, double x, double y) {
+
+  this->toa    = toa;
+  this->energy = energy;
+  this->x      = x;
+  this->y      = y;
+}
+
+bool SingleEvent::operator<(const SingleEvent &other) {
+  return this->toa < other.toa;
+}
+
 //}
 
 /* inInit() //{ */
@@ -112,417 +124,283 @@ void ComptonConeGenerator::onInit() {
 
   mrs_lib::ParamLoader param_loader(nh_, "ComptonConeGenerator");
 
-  param_loader.loadParam("uav_name", uav_name_);
+  param_loader.loadParam("uav_name", _uav_name_);
+  param_loader.loadParam("world_frame", _world_frame_);
+  param_loader.loadParam("compton_camera_frame", _compton_camera_frame_);
 
-  param_loader.loadParam("main_timer_rate", main_timer_rate_);
-  param_loader.loadParam("no_cone_timeout", no_cone_timeout_);
+  param_loader.loadParam("main_timer_rate", _main_timer_rate_);
 
-  param_loader.loadParam("kalman_2D/n_states", n_states_2D_);
-  param_loader.loadParam("kalman_2D/n_inputs", n_inputs_2D_);
-  param_loader.loadParam("kalman_2D/n_measurements", n_measurements_2D_);
-
-  param_loader.loadParam("kalman_2D/r", r_2D_);
-  param_loader.loadParam("kalman_2D/q", q_2D_);
-
-  param_loader.loadMatrixDynamic("kalman_2D/A", A_2D_, n_states_2D_, n_states_2D_);
-  param_loader.loadMatrixDynamic("kalman_2D/B", B_2D_, n_states_2D_, n_inputs_2D_);
-  param_loader.loadMatrixDynamic("kalman_2D/R", R_2D_, n_states_2D_, n_states_2D_);
-  param_loader.loadMatrixDynamic("kalman_2D/P", P_2D_, n_measurements_2D_, n_states_2D_);
-  param_loader.loadMatrixDynamic("kalman_2D/Q", Q_2D_, n_measurements_2D_, n_measurements_2D_);
-
-  param_loader.loadMatrixDynamic("kalman_2D/initial_covariance", initial_covariance_2D_, n_states_2D_, n_states_2D_);
-
-  param_loader.loadParam("kalman_3D/n_states", n_states_3D_);
-  param_loader.loadParam("kalman_3D/n_inputs", n_inputs_3D_);
-  param_loader.loadParam("kalman_3D/n_measurements", n_measurements_3D_);
-
-  param_loader.loadMatrixDynamic("kalman_3D/A", A_3D_, n_states_3D_, n_states_3D_);
-  param_loader.loadMatrixDynamic("kalman_3D/B", B_3D_, n_states_3D_, n_inputs_3D_);
-  param_loader.loadMatrixDynamic("kalman_3D/R", R_3D_, n_states_3D_, n_states_3D_);
-  param_loader.loadMatrixDynamic("kalman_3D/P", P_3D_, n_measurements_3D_, n_states_3D_);
-  param_loader.loadMatrixDynamic("kalman_3D/Q", Q_3D_, n_measurements_3D_, n_measurements_3D_);
-
-  param_loader.loadMatrixDynamic("kalman_3D/initial_states", initial_state_3D_, n_states_3D_, 1);
-
-  param_loader.loadParam("kalman_3D/r", r_3D_);
-  param_loader.loadParam("kalman_3D/q", q_3D_);
-
-  param_loader.loadParam("kalman_3D/max_projection_error", max_projection_error_);
-
-  param_loader.loadMatrixDynamic("kalman_3D/initial_covariance", initial_covariance_3D_, n_states_3D_, n_states_3D_);
-
-  // --------------------------------------------------------------
-  // |                         subscribers                        |
-  // --------------------------------------------------------------
-
-  subscriber_cone      = nh_.subscribe("cone_in", 1, &ComptonConeGenerator::callbackCone, this, ros::TransportHints().tcpNoDelay());
-  subscriber_optimizer = nh_.subscribe("optimizer_in", 1, &ComptonConeGenerator::callbackOptimizer, this, ros::TransportHints().tcpNoDelay());
-
-  // --------------------------------------------------------------
-  // |                         publishers                         |
-  // --------------------------------------------------------------
-
-  publisher_pose_2D = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("pose_2D_out", 1);
-  publisher_pose_3D = nh_.advertise<geometry_msgs::PoseWithCovarianceStamped>("pose_3D_out", 1);
-
-  // --------------------------------------------------------------
-  // |                       service clients                      |
-  // --------------------------------------------------------------
-
-  service_client_search = nh_.serviceClient<std_srvs::Trigger>("search_out");
-  service_client_reset  = nh_.serviceClient<std_srvs::Trigger>("reset_out");
-
-  // --------------------------------------------------------------
-  // |                           timers                           |
-  // --------------------------------------------------------------
-
-  main_timer = nh_.createTimer(ros::Rate(main_timer_rate_), &ComptonConeGenerator::mainTimer, this);
-
-  // --------------------------------------------------------------
-  // |                        Kalman filter                       |
-  // --------------------------------------------------------------
-
-  lkf_2D = new mrs_lib::Lkf(n_states_2D_, n_inputs_2D_, n_measurements_2D_, A_2D_, B_2D_, R_2D_, Q_2D_, P_2D_);
-  lkf_2D->setCovariance(initial_covariance_2D_);
-
-  lkf_3D = new mrs_lib::Lkf(n_states_3D_, n_inputs_3D_, n_measurements_3D_, A_3D_, B_3D_, R_3D_, Q_3D_, P_3D_);
-  lkf_3D->setCovariance(initial_covariance_3D_);
-  lkf_3D->setStates(initial_state_3D_);
-
-  Eigen::Vector3d ground_point;
-  ground_point << 0, 0, 0;
-
-  Eigen::Vector3d ground_normal;
-  ground_normal << 0, 0, 1;
-
-  // --------------------------------------------------------------
-  // |                     dynamic reconfigure                    |
-  // --------------------------------------------------------------
-
-  drs_compton_filter.q_2D = q_2D_;
-  drs_compton_filter.r_2D = r_2D_;
-  drs_compton_filter.q_3D = q_3D_;
-  drs_compton_filter.r_3D = r_3D_;
-
-  reconfigure_server_.reset(new ReconfigureServer(config_mutex_, nh_));
-  reconfigure_server_->updateConfig(drs_compton_filter);
-  ReconfigureServer::CallbackType f = boost::bind(&ComptonConeGenerator::dynamicReconfigureCallback, this, _1, _2);
-  reconfigure_server_->setCallback(f);
-
-  // | ----------------------- finish init ---------------------- |
+  param_loader.loadParam("detector/sensor_thickness", _sensor_thickness_);
+  param_loader.loadParam("detector/time_constant", _time_constant_);
+  param_loader.loadParam("detector/pixel_pitch", _pixel_pitch_);
 
   if (!param_loader.loadedSuccessfully()) {
     ROS_ERROR("[ComptonConeGenerator]: Could not load all parameters!");
     ros::shutdown();
   }
 
-  is_initialized = true;
+  // | -------------------------- libs -------------------------- |
+
+  transformer_      = mrs_lib::Transformer("ComptonConeGenerator", _uav_name_);
+  batch_vizualizer_ = mrs_lib::BatchVisualizer(nh_, "compton_cones", _world_frame_);
+
+  batch_vizualizer_.clearBuffers();
+  batch_vizualizer_.clearVisuals();
+
+  // | ----------------------- subscribers ---------------------- |
+
+  subscriber_cluster_list_ = nh_.subscribe("cluster_list_in", 1, &ComptonConeGenerator::callbackClusterList, this, ros::TransportHints().tcpNoDelay());
+
+  // | ----------------------- publishers ----------------------- |
+
+  publisher_cones_ = nh_.advertise<rad_msgs::Cone>("cones_out", 1);
+
+  // | ------------------------- timers ------------------------- |
+
+  main_timer_ = nh_.createTimer(ros::Rate(_main_timer_rate_), &ComptonConeGenerator::mainTimer, this);
+
+  // | ------------------- dynamic reconfigure ------------------ |
+
+  reconfigure_server_.reset(new Drs_t(drs_mutex_, nh_));
+  reconfigure_server_->updateConfig(drs_params_);
+  Drs_t::CallbackType f = boost::bind(&ComptonConeGenerator::callbackDrs, this, _1, _2);
+  reconfigure_server_->setCallback(f);
+
+  // | ----------------------- finish init ---------------------- |
+
+  is_initialized_ = true;
 
   ROS_INFO("[ComptonConeGenerator]: initialized");
 }
 
 //}
 
-// --------------------------------------------------------------
-// |                          callbacks                         |
-// --------------------------------------------------------------
+// | ------------------------ callbacks ----------------------- |
 
-/* callbackCone() //{ */
+/* callbackClusterList() //{ */
 
-void ComptonConeGenerator::callbackCone(const gazebo_rad_msgs::ConeConstPtr &msg) {
+void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstPtr &msg) {
 
-  if (!is_initialized)
+  if (!is_initialized_)
     return;
 
-  if (!kalman_initialized) {
-    return;
+  ROS_INFO_STREAM_THROTTLE(1.0, "[ComptonConeGenerator]: geeting cluster list");
+
+  std::vector<SingleEvent> events;
+
+  for (size_t i = 0; i < msg->clusters.size(); i++) {
+
+    SingleEvent event(msg->clusters[i].toa, msg->clusters[i].energy, msg->clusters[i].x, msg->clusters[i].y);
+
+    events.push_back(event);
   }
 
-  ROS_INFO_ONCE("[ComptonConeGenerator]: getting cones");
+  std::sort(events.begin(), events.end());
+
+  for (size_t it = 0; it < events.size(); it++) {
+
+    for (size_t it2 = it + 1; it2 < events.size(); it2++) {
+
+      double time_diff = (events[it2].toa - events[it].toa);
+
+      if (time_diff > _time_constant_) {
+        break;
+      }
+
+      ROS_INFO("[SingleEvent]: candidate: %.2f ns", time_diff);
+
+      SingleEvent electron = events[it2];
+      SingleEvent photon   = events[it];
+
+      if (photon.energy >= 174.0 && electron.energy <= 477.0) {
+        ROS_ERROR("[SingleEvent]: compton is happy");
+      } else {
+        ROS_ERROR("[SingleEvent]: compton event rejected, energies don't fit");
+        continue;
+      }
+
+      double z_distance = (time_diff / _time_constant_) * 0.002;
+
+      // calculate the cone direction
+      Eigen::Vector3d cone_direction =
+          Eigen::Vector3d(electron.x * _pixel_pitch_ - photon.x * _pixel_pitch_, electron.y * _pixel_pitch_ - photon.y * _pixel_pitch_, z_distance);
+
+      cone_direction.normalize();
+
+      // calculate the scattering angle
+      auto theta_estimate = getComptonAngle(electron.energy, photon.energy);
+
+      if (theta_estimate) {
+
+        double theta = theta_estimate.value();
+
+        if (theta > M_PI / 2.0) {
+          theta = M_PI - theta;
+          cone_direction *= -1.0;
+        }
+
+        /* cone_direction[0] = 1; */
+        /* cone_direction[1] = 0; */
+        /* cone_direction[2] = 1; */
+        /* cone_direction.normalize(); */
+        /* theta = M_PI / 8; */
+
+        rad_msgs::Cone cone;
+
+        cone.header.stamp    = ros::Time::now();  // TODO fix
+        cone.header.frame_id = _world_frame_;     // TODO fix
+
+        // transform the cone direction to the world frame
+        geometry_msgs::Vector3Stamped cone_direction_camera;
+
+        cone_direction_camera.header.stamp    = ros::Time::now();        // TODO fix
+        cone_direction_camera.header.frame_id = _compton_camera_frame_;  // TODO fix
+        cone_direction_camera.vector.x        = cone_direction[0];
+        cone_direction_camera.vector.y        = cone_direction[1];
+        cone_direction_camera.vector.z        = cone_direction[2];
+
+        {
+          auto result = transformer_.transformSingle(_world_frame_, cone_direction_camera);
+
+          if (result) {
+
+            cone.direction.x = result.value().vector.x;
+            cone.direction.y = result.value().vector.y;
+            cone.direction.z = result.value().vector.z;
+
+          } else {
+
+            ROS_ERROR("[ComptonConeGenerator]: could not transform cone direction to the world frame");
+            continue;
+          }
+        }
+
+        geometry_msgs::PoseStamped cone_pose_camera;
+
+        cone_pose_camera.header.stamp    = ros::Time::now();        // TODO fix
+        cone_pose_camera.header.frame_id = _compton_camera_frame_;  // TODO fix
+        cone_pose_camera.pose.position.x = 0;
+        cone_pose_camera.pose.position.y = 0;
+        cone_pose_camera.pose.position.z = 0;
+
+        Eigen::Vector3d e1                = Eigen::Vector3d(1, 0, 0);
+        Eigen::Vector3d axis              = e1.cross(cone_direction);
+        double          angle             = mrs_lib::vectorAngle(e1, cone_direction);
+        cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
+
+        {
+          auto result = transformer_.transformSingle(_world_frame_, cone_pose_camera);
+
+          if (result) {
+
+            cone.pose.position.x = result.value().pose.position.x;
+            cone.pose.position.y = result.value().pose.position.y;
+            cone.pose.position.z = result.value().pose.position.z;
+
+            cone.pose.orientation = result.value().pose.orientation;
+
+          } else {
+
+            ROS_ERROR("[ComptonConeGenerator]: could not transform cone position to the world frame");
+            continue;
+          }
+        }
+
+        cone.angle = theta;
+
+        mrs_lib::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0,
+                               Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
+
+        batch_vizualizer_.clearBuffers();
+        batch_vizualizer_.clearVisuals();
+        batch_vizualizer_.addCone(cone_vis, 0.5, 0.5, 0.5, 0.5, false, false, 30);
+
+        // mirror the cone
+        /* mrs_lib::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
+        /*                        Eigen::Vector3d(-cone.direction.x, -cone.direction.y, -cone.direction.z)); */
+        /* batch_vizualizer_.addCone(cone_vis2, 0.5, 0.5, 0.5, 0.5, false, false, 30); */
+
+        batch_vizualizer_.publish();
+
+        publisher_cones_.publish(cone);
+
+        // mirror the cone
+        /* cone.direction.x *= -1; */
+        /* cone.direction.y *= -1; */
+        /* cone.direction.z *= -1; */
+        /* publisher_cones_.publish(cone); */
+
+      }
+    }
+  }
+}
+
+//}
+
+/* callbackDrs() //{ */
+
+void ComptonConeGenerator::callbackDrs(compton_cone_generator::compton_cone_generatorConfig &drs_config_t, [[maybe_unused]] uint32_t level) {
 
   {
-    std::scoped_lock lock(mutex_cone_last_time);
+    std::scoped_lock lock(mutex_params_);
 
-    cone_last_time = ros::Time::now();
+    drs_params_ = drs_config_t;
   }
 
-  std::scoped_lock lock(mutex_lkf_3D);
-
-  Eigen::Vector3d cone_position(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
-  Eigen::Vector3d cone_direction(msg->direction.x, msg->direction.y, msg->direction.z);
-  cone_direction.normalize();
-
-  mrs_lib::Cone *cone = new mrs_lib::Cone(cone_position, msg->angle, 50, cone_direction);
-
-  // | --------------------------- 3D --------------------------- |
-  Eigen::Vector3d state_3D(lkf_3D->getState(0), lkf_3D->getState(1), lkf_3D->getState(2));
-  ROS_INFO_STREAM("[ComptonConeGenerator]: state_3D = " << state_3D);
-  Eigen::Vector3d projection = cone->projectPoint(state_3D);
-  ROS_INFO_STREAM("[ComptonConeGenerator]: projection = " << projection);
-  ROS_INFO_STREAM("[ComptonConeGenerator]: cone_position = " << cone_position);
-
-  Eigen::Vector3d unit(1, 0, 0);
-  /* Eigen::Vector3d dir_to_proj = projection - cone_position; */
-  Eigen::Vector3d dir_to_proj = projection - state_3D;
-  ROS_INFO_STREAM("[ComptonConeGenerator]: dir_to_proj = " << dir_to_proj);
-
-  // calculate the angular size of the projection distance
-  double proj_ang_size = asin((projection - state_3D).norm() / (projection - cone_position).norm());
-
-  if (proj_ang_size > max_projection_error_) {
-
-    ROS_INFO("[ComptonConeGenerator]: angular error too large, reinitializing");
-
-    std::scoped_lock lock(mutex_optimizer);
-
-    Eigen::MatrixXd new_cov3 = Eigen::MatrixXd::Zero(n_states_3D_, n_states_3D_);
-    new_cov3 << optimizer.pose.covariance[0]+1.0, 0, 0, 0, optimizer.pose.covariance[7]+1.0, 0, 0, 0, optimizer.pose.covariance[14]+1.0;
-
-    lkf_3D->setCovariance(new_cov3);
-
-    std_srvs::Trigger search_out;
-    /* service_client_reset.call(search_out); */
-    service_client_search.call(search_out);
-
-    ROS_INFO("[ComptonConeGenerator]: calling service for searching");
-
-    kalman_initialized = false;
-  }
-
-  // construct the covariance rotation
-  double                   angle = acos((dir_to_proj.dot(unit)) / (dir_to_proj.norm() * unit.norm()));
-  Eigen::Vector3d          axis  = unit.cross(dir_to_proj);
-  Eigen::AngleAxis<double> my_quat(angle, axis);
-  Eigen::Matrix3d          rot = my_quat.toRotationMatrix();
-
-  // rotate the covariance
-  Eigen::Matrix3d rot_cov = rot * Q_3D_ * rot.transpose();
-
-  lkf_3D->setMeasurement(projection, rot_cov);
-  lkf_3D->iterate();
-
-  // | --------------------------- 2D --------------------------- |
-
-  Eigen::Vector3d state_2D(lkf_2D->getState(0), lkf_2D->getState(1), 0);
-  Eigen::Vector3d projection_2D = cone->projectPoint(state_2D);
-
-  // project it down to the ground
-  projection_2D(2) = 0;
-
-  dir_to_proj = projection_2D - state_2D;
-
-  // construct the covariance rotation
-  angle = acos((dir_to_proj.dot(unit)) / (dir_to_proj.norm() * unit.norm()));
-  axis  = unit.cross(dir_to_proj);
-  Eigen::AngleAxis<double> my_quat2(angle, axis);
-  rot = my_quat2.toRotationMatrix();
-
-  // rotate the covariance
-  Eigen::Matrix3d Q_2D_in_3D   = Eigen::MatrixXd::Zero(3, 3);
-  Q_2D_in_3D.block(0, 0, 2, 2) = Q_2D_;
-  Q_2D_in_3D(2, 2)             = Q_2D_in_3D(1, 1);
-
-  ROS_INFO_STREAM("[ComptonConeGenerator]: Q_2D_in_3D:" << Q_2D_in_3D);
-  rot_cov                = rot * Q_2D_in_3D * rot.transpose();
-  Eigen::Matrix2d cov_2D = rot_cov.block(0, 0, 2, 2);
-
-  /* cov_2D << q_2D_, 0, */
-  /*           0, q_2D_; */
-
-  Eigen::Vector2d measurement(projection_2D(0), projection_2D(1));
-
-  ROS_INFO("[ComptonConeGenerator]: state %f %f", state_2D(0), state_2D(1));
-  ROS_INFO("[ComptonConeGenerator]: measurement %f %f", measurement(0), measurement(1));
-
-  lkf_2D->setMeasurement(measurement, cov_2D);
-  lkf_2D->iterate();
+  ROS_INFO("[ComptonConeGenerator]: updated drs params");
 }
 
 //}
 
-/* callbackOptimizer() //{ */
-
-void ComptonConeGenerator::callbackOptimizer(const geometry_msgs::PoseWithCovarianceStampedConstPtr &msg) {
-
-  if (!is_initialized) {
-    return;
-  }
-
-  std::scoped_lock lock(mutex_optimizer);
-
-  got_optimizer = true;
-
-  optimizer = *msg;
-
-  if (!kalman_initialized) {
-
-    std::scoped_lock lock(mutex_lkf_3D, mutex_lkf_2D);
-
-    ROS_INFO("[ComptonConeGenerator]: initializing KF");
-
-    Eigen::Vector2d new_state2;
-    new_state2 << msg->pose.pose.position.x, msg->pose.pose.position.z;
-
-    Eigen::MatrixXd new_cov2 = Eigen::MatrixXd::Zero(n_states_2D_, n_states_2D_);
-    new_cov2 << msg->pose.covariance[0]+1.0, 0, 0, msg->pose.covariance[7]+1.0;
-    ROS_INFO_STREAM("[ComptonConeGenerator]: new_cov2 = " << new_cov2);
-
-    lkf_2D->setStates(new_state2);
-    lkf_2D->setCovariance(new_cov2);
-
-    Eigen::Vector3d new_state3;
-    new_state3 << msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z;
-
-    Eigen::MatrixXd new_cov3 = Eigen::MatrixXd::Zero(n_states_3D_, n_states_3D_);
-    new_cov3 << msg->pose.covariance[0]+1.0, 0, 0, 0, msg->pose.covariance[7]+1.0, 0, 0, 0, msg->pose.covariance[14]+1.0;
-
-    ROS_INFO_STREAM("[ComptonConeGenerator]: new_cov3 = " << new_cov3);
-
-    lkf_3D->setStates(new_state3);
-    lkf_3D->setCovariance(new_cov3);
-
-    kalman_initialized = true;
-  }
-}
-
-//}
+// | ------------------------- timers ------------------------- |
 
 /* mainTimer() //{ */
 
 void ComptonConeGenerator::mainTimer([[maybe_unused]] const ros::TimerEvent &event) {
 
-  if (!is_initialized)
+  if (!is_initialized_)
     return;
+}
 
-  if (!kalman_initialized) {
-    return;
+//}
+
+// | ------------------------ routines ------------------------ |
+
+/* getComptonAngle() //{ */
+
+std::optional<double> ComptonConeGenerator::getComptonAngle(const double _ee, const double _ef) {
+
+  double ee = _ee < 0 ? 0 : _ee;
+  double ef = _ef < 0 ? 0 : _ef;
+
+  double e0 = ee + ef;
+
+  /* double eeJ = conversions::energyeVtoJ(ee*1000.0); */
+  double efJ = conversions::energyeVtoJ(ef * 1000.0);
+  double e0J = conversions::energyeVtoJ(e0 * 1000.0);
+
+  double angle;
+
+  try {
+    angle = acos(1.0 + constants::me * pow(constants::c, 2.0) * (1.0 / e0J - 1.0 / efJ));
+
+    if (!std::isfinite(angle)) {
+      ROS_ERROR("NaN detected in variable \"angle\"!!!");
+      ROS_ERROR_STREAM("[SingleEvent]: ee = " << ee << " kev");
+      ROS_ERROR_STREAM("[SingleEvent]: ef = " << ef << " kev");
+      return false;
+    }
+
+    return angle;
   }
-
-  // | ------------------------ 2D kalman ----------------------- |
-
-  {
-
-    std::scoped_lock lock(mutex_lkf_2D);
-
-    geometry_msgs::PoseWithCovarianceStamped pose_out;
-
-    pose_out.header.stamp         = ros::Time::now();
-    pose_out.header.frame_id      = uav_name_ + "/gps_origin";
-    pose_out.pose.pose.position.x = lkf_2D->getState(0);
-    pose_out.pose.pose.position.y = lkf_2D->getState(1);
-    pose_out.pose.pose.position.z = 0;
-
-    Eigen::MatrixXd covariance = lkf_2D->getCovariance();
-
-    pose_out.pose.covariance[0] = covariance(0, 0);
-    pose_out.pose.covariance[1] = covariance(0, 1);
-    pose_out.pose.covariance[2] = 0;
-    pose_out.pose.covariance[6] = covariance(1, 0);
-    pose_out.pose.covariance[7] = covariance(1, 1);
-    pose_out.pose.covariance[8] = 0;
-
-    try {
-      publisher_pose_2D.publish(pose_out);
-    }
-    catch (...) {
-      ROS_ERROR("Exception caught during publishing topic %s.", publisher_pose_2D.getTopic().c_str());
-    }
-  }
-
-  // | ------------------------ 3D kalman ----------------------- |
-
-  {
-
-    std::scoped_lock lock(mutex_lkf_3D);
-
-    geometry_msgs::PoseWithCovarianceStamped pose_out;
-
-    pose_out.header.stamp         = ros::Time::now();
-    pose_out.header.frame_id      = uav_name_ + "/gps_origin";
-    pose_out.pose.pose.position.x = lkf_3D->getState(0);
-    pose_out.pose.pose.position.y = lkf_3D->getState(1);
-    pose_out.pose.pose.position.z = lkf_3D->getState(2);
-
-    Eigen::MatrixXd covariance = lkf_3D->getCovariance();
-
-    pose_out.pose.covariance[0]  = covariance(0, 0);
-    pose_out.pose.covariance[1]  = covariance(0, 1);
-    pose_out.pose.covariance[2]  = covariance(0, 2);
-    pose_out.pose.covariance[6]  = covariance(1, 0);
-    pose_out.pose.covariance[7]  = covariance(1, 1);
-    pose_out.pose.covariance[8]  = covariance(1, 2);
-    pose_out.pose.covariance[12] = covariance(2, 0);
-    pose_out.pose.covariance[13] = covariance(2, 1);
-    pose_out.pose.covariance[14] = covariance(2, 2);
-
-    try {
-      publisher_pose_3D.publish(pose_out);
-    }
-    catch (...) {
-      ROS_ERROR("Exception caught during publishing topic %s.", publisher_pose_3D.getTopic().c_str());
-    }
-  }
-
-  {
-    std::scoped_lock lock(mutex_cone_last_time);
-
-    if ((ros::Time::now() - cone_last_time).toSec() > no_cone_timeout_) {
-
-      ROS_INFO("[ComptonConeGenerator]: no cones arrived for more than %.2f s", no_cone_timeout_);
-
-      std_srvs::Trigger search_out;
-      service_client_search.call(search_out);
-
-      ROS_INFO("[ComptonConeGenerator]: calling service for searching");
-
-      kalman_initialized = false;
-    }
+  catch (...) {
+    return false;
   }
 }
 
 //}
 
-/* dynamicReconfigureCallback() //{ */
-
-void ComptonConeGenerator::dynamicReconfigureCallback(compton_camera_filter::compton_filterConfig &config, [[maybe_unused]] uint32_t level) {
-
-  {
-    std::scoped_lock lock(mutex_drs);
-
-    q_2D_ = config.q_2D;
-    r_2D_ = config.r_2D;
-
-    q_3D_ = config.q_3D;
-    r_3D_ = config.r_3D;
-  }
-
-  {
-    std::scoped_lock lock(mutex_lkf_3D);
-
-    R_3D_(0, 0) = r_3D_;
-    R_3D_(1, 1) = r_3D_;
-    R_3D_(2, 2) = r_3D_;
-    lkf_3D->setR(R_3D_);
-
-    Q_3D_(0, 0) = q_3D_;
-  }
-
-  {
-    std::scoped_lock lock(mutex_lkf_2D);
-
-    R_2D_(0, 0) = r_2D_;
-    R_2D_(1, 1) = r_2D_;
-    lkf_2D->setR(R_2D_);
-
-    Q_2D_(0, 0) = q_2D_;
-  }
-
-  ROS_INFO("[ComptonConeGenerator]: updated covariances");
-}
-
-//}
-
-}  // namespace compton_camera_filter
+}  // namespace compton_cone_generator
 
 #include <pluginlib/class_list_macros.h>
-PLUGINLIB_EXPORT_CLASS(compton_camera_filter::ComptonConeGenerator, nodelet::Nodelet)
+PLUGINLIB_EXPORT_CLASS(compton_cone_generator::ComptonConeGenerator, nodelet::Nodelet)

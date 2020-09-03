@@ -1,6 +1,11 @@
 <launch>
 
-  <arg name="uav_name" default="$(optenv UAV_NAME uav)"/>
+  <arg name="uav_name" default="$(optenv UAV_NAME uav)" />
+
+  <arg name="fcu_frame" default="$(arg uav_name)/fcu" />
+  <arg name="compton_camera_frame" default="$(arg uav_name)/compton_camera" />
+  <arg name="world_frame" default="$(arg uav_name)/stable_origin" />
+  <!-- <arg name="world_frame" default="$(arg uav_name)/hector_origin" /> -->
 
   <group ns="$(arg uav_name)">
 
@@ -9,12 +14,23 @@
       <rosparam file="$(find compton_cone_generator)/config/compton_cone_generator.yaml" command="load" />
 
       <param name="uav_name" value="$(arg uav_name)" />
+      <param name="compton_camera_frame" value="$(arg compton_camera_frame)" />
+      <param name="world_frame" value="$(arg world_frame)" />
 
       <!-- subscribed topics -->
       <remap from="~cluster_list_in" to="compton_camera/cluster_list" />
       <remap from="~cones_out" to="compton_camera/cones" />
 
     </node>
+
+    <!-- + pi/2 to the right -->
+    <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="compton_to_fcu_tf" args="0.1 0.0 -0.1 0.0 1.57 1.57 $(arg fcu_frame) $(arg compton_camera_frame)" /> -->
+
+    <!-- + pi to the right -->
+    <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="compton_to_fcu_tf" args="0.1 0.0 -0.1 0.0 1.57 3.14 $(arg fcu_frame) $(arg compton_camera_frame)" /> -->
+
+    <!-- correct -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="compton_to_fcu_tf" args="0.1 0.0 -0.1 0.0 1.57 0 $(arg fcu_frame) $(arg compton_camera_frame)" />
 
   </group>
 

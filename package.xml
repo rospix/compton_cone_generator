@@ -16,7 +16,9 @@
   <depend>nodelet</depend>
   <depend>roscpp</depend>
   <depend>message_runtime</depend>
-  <depend>gazebo_rad_msgs</depend>
+  <depend>rad_msgs</depend>
+  <depend>mrs_msgs</depend>
+  <depend>radiation_utils</depend>
   <depend>mrs_lib</depend>
   <depend>dynamic_reconfigure</depend>
 
