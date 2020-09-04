@@ -139,9 +139,12 @@ void ComptonConeGenerator::onInit() {
     ros::shutdown();
   }
 
-  // | -------------------------- libs -------------------------- |
+  // | ----------------------- transformer ---------------------- |
 
-  transformer_      = mrs_lib::Transformer("ComptonConeGenerator", _uav_name_);
+  transformer_ = mrs_lib::Transformer("ComptonConeGenerator", _uav_name_);
+
+  // | -------------------- batch visualizer -------------------- |
+
   batch_vizualizer_ = mrs_lib::BatchVisualizer(nh_, "compton_cones", _world_frame_);
 
   batch_vizualizer_.clearBuffers();
@@ -212,14 +215,14 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       SingleEvent electron = events[it2];
       SingleEvent photon   = events[it];
 
-      if (photon.energy >= 174.0 && electron.energy <= 477.0) {
+      if (fabs((photon.energy + electron.energy) - 662) < 200 && (photon.energy >= 174.0 && electron.energy <= 477.0)) {
         ROS_ERROR("[SingleEvent]: compton is happy");
       } else {
         ROS_ERROR("[SingleEvent]: compton event rejected, energies don't fit");
         continue;
       }
 
-      double z_distance = (time_diff / _time_constant_) * 0.002;
+      double z_distance = (time_diff / _time_constant_) * _sensor_thickness_;
 
       // calculate the cone direction
       Eigen::Vector3d cone_direction =
@@ -313,23 +316,24 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
         batch_vizualizer_.clearBuffers();
         batch_vizualizer_.clearVisuals();
-        batch_vizualizer_.addCone(cone_vis, 0.5, 0.5, 0.5, 0.5, false, false, 30);
+        batch_vizualizer_.addCone(cone_vis, 0.2, 0.8, 0.5, 0.8, true, false, 30);
 
         // mirror the cone
         /* mrs_lib::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
         /*                        Eigen::Vector3d(-cone.direction.x, -cone.direction.y, -cone.direction.z)); */
-        /* batch_vizualizer_.addCone(cone_vis2, 0.5, 0.5, 0.5, 0.5, false, false, 30); */
+        /* batch_vizualizer_.addCone(cone_vis2, 0.2, 0.8, 0.5, 0.3, true, false, 30); */
 
         batch_vizualizer_.publish();
 
         publisher_cones_.publish(cone);
+
+        ros::Duration(1.0).sleep();
 
         // mirror the cone
         /* cone.direction.x *= -1; */
         /* cone.direction.y *= -1; */
         /* cone.direction.z *= -1; */
         /* publisher_cones_.publish(cone); */
-
       }
     }
   }
@@ -376,13 +380,17 @@ std::optional<double> ComptonConeGenerator::getComptonAngle(const double _ee, co
   double e0 = ee + ef;
 
   /* double eeJ = conversions::energyeVtoJ(ee*1000.0); */
-  double efJ = conversions::energyeVtoJ(ef * 1000.0);
-  double e0J = conversions::energyeVtoJ(e0 * 1000.0);
+  double efJ = conversions::energyeVtoJ(ef*1000.0);
+  double e0J = conversions::energyeVtoJ(e0*1000.0);
 
   double angle;
 
   try {
+    // Tomas's
     angle = acos(1.0 + constants::me * pow(constants::c, 2.0) * (1.0 / e0J - 1.0 / efJ));
+
+    // Dan's
+    /* angle = acos(1.0 - constants::me * pow(constants::c, 2.0) * (eeJ / (e0J * (e0J - eeJ)))); */
 
     if (!std::isfinite(angle)) {
       ROS_ERROR("NaN detected in variable \"angle\"!!!");
