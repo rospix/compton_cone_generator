@@ -43,12 +43,16 @@ public:
 
   // | ------------------------- params ------------------------- |
 
+  double      _plotting_cone_height_;
+  bool        _plotting_clear_cones_;
   std::string _uav_name_;
   double      _sensor_thickness_;
   double      _time_constant_;
   double      _pixel_pitch_;
   std::string _compton_camera_frame_;
   std::string _world_frame_;
+  bool        _prior_enabled_ = false;
+  double      _prior_energy_;
 
   // | ----------------------- subscribers ---------------------- |
 
@@ -88,6 +92,8 @@ class SingleEvent {
 
 public:
   SingleEvent(double toa, double energy, double x, double y);
+  SingleEvent &operator=(const SingleEvent &other);
+  SingleEvent(void){};
 
   double toa;
   double energy;
@@ -106,6 +112,21 @@ SingleEvent::SingleEvent(double toa, double energy, double x, double y) {
   this->y      = y;
 }
 
+SingleEvent &SingleEvent::operator=(const SingleEvent &other) {
+
+  if (this == &other) {
+    return *this;
+  }
+
+  this->toa    = other.toa;
+  this->energy = other.energy;
+  this->x      = other.x;
+  this->y      = other.y;
+
+  return *this;
+
+};  // namespace compton_cone_generator
+
 bool SingleEvent::operator<(const SingleEvent &other) {
   return this->toa < other.toa;
 }
@@ -123,6 +144,12 @@ void ComptonConeGenerator::onInit() {
   ros::Time::waitForValid();
 
   mrs_lib::ParamLoader param_loader(nh_, "ComptonConeGenerator");
+
+  param_loader.loadParam("prior/enabled", _prior_enabled_);
+  param_loader.loadParam("prior/energy", _prior_energy_);
+
+  param_loader.loadParam("plotting/cone_height", _plotting_cone_height_);
+  param_loader.loadParam("plotting/clear_cones", _plotting_clear_cones_);
 
   param_loader.loadParam("uav_name", _uav_name_);
   param_loader.loadParam("world_frame", _world_frame_);
@@ -206,16 +233,28 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       double time_diff = (events[it2].toa - events[it].toa);
 
-      if (time_diff > _time_constant_) {
+      if (fabs(time_diff) > _time_constant_) {
         break;
       }
 
-      ROS_INFO("[SingleEvent]: candidate: %.2f ns", time_diff);
+      SingleEvent electron;
+      SingleEvent photon;
 
-      SingleEvent electron = events[it2];
-      SingleEvent photon   = events[it];
+      if (time_diff > 0) {
+        electron = events[it2];
+        photon   = events[it];
+      } else {
+        electron = events[it];
+        photon   = events[it2];
+      }
 
-      if (fabs((photon.energy + electron.energy) - 662) < 200 && (photon.energy >= 174.0 && electron.energy <= 477.0)) {
+      if (_prior_enabled_ && (fabs((photon.energy + electron.energy) - _prior_energy_) > (photon.energy + electron.energy) * 0.2)) {
+        continue;
+      } else {
+        ROS_INFO("[SingleEvent]: events fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
+      }
+
+      if (photon.energy >= 174.0 && electron.energy <= 477.0) {
         ROS_ERROR("[SingleEvent]: compton is happy");
       } else {
         ROS_ERROR("[SingleEvent]: compton event rejected, energies don't fit");
@@ -235,18 +274,17 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       if (theta_estimate) {
 
-        double theta = theta_estimate.value();
+        double theta = fabs(theta_estimate.value());
+
+        /* cone_direction[0] = 1; */
+        /* cone_direction[1] = 0; */
+        /* cone_direction[2] = 0; */
+        /* cone_direction.normalize(); */
 
         if (theta > M_PI / 2.0) {
           theta = M_PI - theta;
           cone_direction *= -1.0;
         }
-
-        /* cone_direction[0] = 1; */
-        /* cone_direction[1] = 0; */
-        /* cone_direction[2] = 1; */
-        /* cone_direction.normalize(); */
-        /* theta = M_PI / 8; */
 
         rad_msgs::Cone cone;
 
@@ -311,12 +349,16 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
         cone.angle = theta;
 
-        mrs_lib::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0,
-                               Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
+        mrs_lib::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta,
+                               cos(cone.angle) * _plotting_cone_height_, Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
 
-        batch_vizualizer_.clearBuffers();
-        batch_vizualizer_.clearVisuals();
+        if (_plotting_clear_cones_) {
+          batch_vizualizer_.clearBuffers();
+          batch_vizualizer_.clearVisuals();
+        }
+
         batch_vizualizer_.addCone(cone_vis, 0.2, 0.8, 0.5, 0.8, true, false, 30);
+        batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 1.0, false, false, 30);
 
         // mirror the cone
         /* mrs_lib::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
@@ -380,14 +422,14 @@ std::optional<double> ComptonConeGenerator::getComptonAngle(const double _ee, co
   double e0 = ee + ef;
 
   /* double eeJ = conversions::energyeVtoJ(ee*1000.0); */
-  double efJ = conversions::energyeVtoJ(ef*1000.0);
-  double e0J = conversions::energyeVtoJ(e0*1000.0);
+  double efJ = conversions::energyeVtoJ(ef * 1000.0);
+  double e0J = conversions::energyeVtoJ(e0 * 1000.0);
 
   double angle;
 
   try {
     // Tomas's
-    angle = acos(1.0 + constants::me * pow(constants::c, 2.0) * (1.0 / e0J - 1.0 / efJ));
+    angle = acos(1.0 + constants::me * pow(constants::c, 2.0) * ((1.0 / e0J) - (1.0 / efJ)));
 
     // Dan's
     /* angle = acos(1.0 - constants::me * pow(constants::c, 2.0) * (eeJ / (e0J * (e0J - eeJ)))); */
@@ -396,13 +438,13 @@ std::optional<double> ComptonConeGenerator::getComptonAngle(const double _ee, co
       ROS_ERROR("NaN detected in variable \"angle\"!!!");
       ROS_ERROR_STREAM("[SingleEvent]: ee = " << ee << " kev");
       ROS_ERROR_STREAM("[SingleEvent]: ef = " << ef << " kev");
-      return false;
+      return {};
     }
 
     return angle;
   }
   catch (...) {
-    return false;
+    return {};
   }
 }
 

@@ -2,10 +2,10 @@
 
   <arg name="uav_name" default="$(optenv UAV_NAME uav)" />
 
-  <arg name="fcu_frame" default="$(arg uav_name)/fcu" />
   <arg name="compton_camera_frame" default="$(arg uav_name)/compton_camera" />
   <arg name="world_frame" default="$(arg uav_name)/stable_origin" />
   <!-- <arg name="world_frame" default="$(arg uav_name)/hector_origin" /> -->
+  <!-- <arg name="world_frame" default="$(arg uav_name)/fcu" /> -->
 
   <group ns="$(arg uav_name)">
 
@@ -22,15 +22,6 @@
       <remap from="~cones_out" to="compton_camera/cones" />
 
     </node>
-
-    <!-- + pi/2 to the right -->
-    <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="compton_to_fcu_tf" args="0.1 0.0 -0.1 0.0 1.57 1.57 $(arg fcu_frame) $(arg compton_camera_frame)" /> -->
-
-    <!-- + pi to the right -->
-    <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="compton_to_fcu_tf" args="0.1 0.0 -0.1 0.0 1.57 3.14 $(arg fcu_frame) $(arg compton_camera_frame)" /> -->
-
-    <!-- correct -->
-    <node pkg="tf2_ros" type="static_transform_publisher" name="compton_to_fcu_tf" args="0.1 0.0 -0.1 0.0 1.57 0 $(arg fcu_frame) $(arg compton_camera_frame)" />
 
   </group>
 

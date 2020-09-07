@@ -3,6 +3,17 @@ main_timer_rate: 30 # [Hz]
 detector:
 
   sensor_thickness: 0.002 # [m]
-  time_constant: 90.0 # [ns]
+  time_constant: 86.0 # [ns]
 
   pixel_pitch: 0.000055 # [m]
+
+prior:
+
+  enabled: true
+  # energy: 59.0 # [kev]
+  energy: 662.0 # [kev]
+
+plotting:
+
+  cone_height: 5.0 # [m]
+  clear_cones: true
