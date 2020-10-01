@@ -15,5 +15,5 @@ prior:
 
 plotting:
 
-  cone_height: 5.0 # [m]
+  cone_height: 10.0 # [m]
   clear_cones: true

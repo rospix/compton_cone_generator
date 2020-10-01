@@ -357,8 +357,8 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
           batch_vizualizer_.clearVisuals();
         }
 
-        batch_vizualizer_.addCone(cone_vis, 0.2, 0.8, 0.5, 0.8, true, false, 30);
-        batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 1.0, false, false, 30);
+        batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30);
+        batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
 
         // mirror the cone
         /* mrs_lib::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
