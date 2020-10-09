@@ -1,5 +1,8 @@
 main_timer_rate: 30 # [Hz]
 
+coincidence_matching:
+  method: 0 # { 0 = time, 1 = id }
+
 detector:
 
   sensor_thickness: 0.002 # [m]

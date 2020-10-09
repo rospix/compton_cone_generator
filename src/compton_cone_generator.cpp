@@ -27,6 +27,8 @@
 namespace compton_cone_generator
 {
 
+int _coincidence_matching_method_;
+
 /* ComptonConeGenerator //{ */
 
 class ComptonConeGenerator : public nodelet::Nodelet {
@@ -91,25 +93,30 @@ public:
 class SingleEvent {
 
 public:
-  SingleEvent(double toa, double energy, double x, double y);
+  SingleEvent(const double toa, const double energy, const double x, const double y, const unsigned long id, const ros::Time stamp);
   SingleEvent &operator=(const SingleEvent &other);
   SingleEvent(void){};
 
-  double toa;
-  double energy;
-  double x;
-  double y;
+  double        toa;
+  double        energy;
+  double        x;
+  double        y;
+  unsigned long id;
+  ros::Time     stamp;
+  bool          order;  // 0 = time, 1 = id
 
   bool operator<(const SingleEvent &other);
 };
 
 // constructor
-SingleEvent::SingleEvent(double toa, double energy, double x, double y) {
+SingleEvent::SingleEvent(const double toa, const double energy, const double x, const double y, const unsigned long id, const ros::Time stamp) {
 
   this->toa    = toa;
   this->energy = energy;
   this->x      = x;
   this->y      = y;
+  this->id     = id;
+  this->stamp  = stamp;
 }
 
 SingleEvent &SingleEvent::operator=(const SingleEvent &other) {
@@ -122,13 +129,19 @@ SingleEvent &SingleEvent::operator=(const SingleEvent &other) {
   this->energy = other.energy;
   this->x      = other.x;
   this->y      = other.y;
+  this->id     = other.id;
+  this->stamp  = other.stamp;
 
   return *this;
 
 };  // namespace compton_cone_generator
 
 bool SingleEvent::operator<(const SingleEvent &other) {
-  return this->toa < other.toa;
+  if (_coincidence_matching_method_ == 0) {
+    return this->toa < other.toa;
+  } else {
+    return this->id < other.id;
+  }
 }
 
 //}
@@ -144,6 +157,8 @@ void ComptonConeGenerator::onInit() {
   ros::Time::waitForValid();
 
   mrs_lib::ParamLoader param_loader(nh_, "ComptonConeGenerator");
+
+  param_loader.loadParam("coincidence_matching/method", _coincidence_matching_method_);
 
   param_loader.loadParam("prior/enabled", _prior_enabled_);
   param_loader.loadParam("prior/energy", _prior_energy_);
@@ -214,13 +229,14 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
   if (!is_initialized_)
     return;
 
-  ROS_INFO_STREAM_THROTTLE(1.0, "[ComptonConeGenerator]: geeting cluster list");
+  ROS_INFO_ONCE("[ComptonConeGenerator]: geeting cluster list");
 
   std::vector<SingleEvent> events;
 
   for (size_t i = 0; i < msg->clusters.size(); i++) {
 
-    SingleEvent event(msg->clusters[i].toa, msg->clusters[i].energy, msg->clusters[i].x, msg->clusters[i].y);
+    SingleEvent event(msg->clusters[i].toa, msg->clusters[i].energy, msg->clusters[i].x, msg->clusters[i].y, msg->clusters[i].id, msg->clusters[i].stamp);
+    /* ROS_INFO("[SingleEvent]: id: %lu", msg->clusters[i].id); */
 
     events.push_back(event);
   }
@@ -233,8 +249,28 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       double time_diff = (events[it2].toa - events[it].toa);
 
-      if (fabs(time_diff) > _time_constant_) {
-        break;
+      if (_coincidence_matching_method_ == 0) {
+
+        if (fabs(time_diff) > _time_constant_) {
+
+          if (events[it].id == events[it2].id) {
+            ROS_ERROR("[SingleEvent]: false negative coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+          }
+
+          break;
+        } else {
+
+          if (events[it].id != events[it2].id) {
+            ROS_ERROR("[SingleEvent]: false positive coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+          }
+        }
+
+      } else {
+        if (events[it].id == events[it2].id) {
+          ROS_ERROR("[SingleEvent]: coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+        } else {
+          continue;
+        }
       }
 
       SingleEvent electron;
@@ -249,15 +285,16 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       }
 
       if (_prior_enabled_ && (fabs((photon.energy + electron.energy) - _prior_energy_) > (photon.energy + electron.energy) * 0.2)) {
+        ROS_WARN("[SingleEvent]: events don't fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
         continue;
       } else {
         ROS_INFO("[SingleEvent]: events fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
       }
 
       if (photon.energy >= 174.0 && electron.energy <= 477.0) {
-        ROS_ERROR("[SingleEvent]: compton is happy");
+        ROS_INFO("[SingleEvent]: compton is happy");
       } else {
-        ROS_ERROR("[SingleEvent]: compton event rejected, energies don't fit");
+        ROS_INFO("[SingleEvent]: compton event rejected, energies don't fit");
         continue;
       }
 
@@ -288,14 +325,14 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
         rad_msgs::Cone cone;
 
-        cone.header.stamp    = ros::Time::now();  // TODO fix
-        cone.header.frame_id = _world_frame_;     // TODO fix
+        cone.header.stamp    = electron.stamp;
+        cone.header.frame_id = _world_frame_;  // TODO fix
 
         // transform the cone direction to the world frame
         geometry_msgs::Vector3Stamped cone_direction_camera;
 
-        cone_direction_camera.header.stamp    = ros::Time::now();        // TODO fix
-        cone_direction_camera.header.frame_id = _compton_camera_frame_;  // TODO fix
+        cone_direction_camera.header.stamp    = electron.stamp;
+        cone_direction_camera.header.frame_id = msg->header.frame_id;
         cone_direction_camera.vector.x        = cone_direction[0];
         cone_direction_camera.vector.y        = cone_direction[1];
         cone_direction_camera.vector.z        = cone_direction[2];
@@ -311,15 +348,16 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
           } else {
 
-            ROS_ERROR("[ComptonConeGenerator]: could not transform cone direction to the world frame");
+            ROS_ERROR("[ComptonConeGenerator]: could not transform cone direction (frame: %s, stamp: %f) to the world frame (%s)",
+                      cone_direction_camera.header.frame_id.c_str(), cone_direction_camera.header.stamp.toSec(), _world_frame_.c_str());
             continue;
           }
         }
 
         geometry_msgs::PoseStamped cone_pose_camera;
 
-        cone_pose_camera.header.stamp    = ros::Time::now();        // TODO fix
-        cone_pose_camera.header.frame_id = _compton_camera_frame_;  // TODO fix
+        cone_pose_camera.header.stamp    = electron.stamp;
+        cone_pose_camera.header.frame_id = msg->header.frame_id;
         cone_pose_camera.pose.position.x = 0;
         cone_pose_camera.pose.position.y = 0;
         cone_pose_camera.pose.position.z = 0;
