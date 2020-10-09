@@ -229,192 +229,233 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
   if (!is_initialized_)
     return;
 
-  ROS_INFO_ONCE("[ComptonConeGenerator]: geeting cluster list");
+  ROS_INFO_ONCE("[ComptonConeGenerator]: geting cluster list");
+
+  if (msg->clusters.size() == 0) {
+    return;
+  }
 
   std::vector<SingleEvent> events;
 
+  // put the cluster into a list
   for (size_t i = 0; i < msg->clusters.size(); i++) {
 
     SingleEvent event(msg->clusters[i].toa, msg->clusters[i].energy, msg->clusters[i].x, msg->clusters[i].y, msg->clusters[i].id, msg->clusters[i].stamp);
-    /* ROS_INFO("[SingleEvent]: id: %lu", msg->clusters[i].id); */
 
     events.push_back(event);
   }
 
+  // sort list with clusters
   std::sort(events.begin(), events.end());
 
-  for (size_t it = 0; it < events.size(); it++) {
+  // loop throught the clusters
+  size_t it = 0;
+  while (it < (events.size() - 1)) {
 
-    for (size_t it2 = it + 1; it2 < events.size(); it2++) {
+    std::vector<SingleEvent> coincidences;
+    coincidences.push_back(events[it]);
+
+    size_t it2 = it + 1;
+    for (; it2 < events.size(); it2++) {
 
       double time_diff = (events[it2].toa - events[it].toa);
 
       if (_coincidence_matching_method_ == 0) {
 
-        if (fabs(time_diff) > _time_constant_) {
+        if (time_diff <= _time_constant_) {  // coincidence
+
+          if (events[it].id != events[it2].id) {
+            ROS_WARN("[SingleEvent]: false positive coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+          }
+
+          coincidences.push_back(events[it2]);
+
+        } else {  // not coincidence
 
           if (events[it].id == events[it2].id) {
-            ROS_ERROR("[SingleEvent]: false negative coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+            ROS_WARN("[SingleEvent]: false negative coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
           }
 
           break;
-        } else {
-
-          if (events[it].id != events[it2].id) {
-            ROS_ERROR("[SingleEvent]: false positive coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
-          }
         }
 
       } else {
-        if (events[it].id == events[it2].id) {
-          ROS_ERROR("[SingleEvent]: coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+
+        if (events[it].id == events[it2].id) {  // coincidence
+
+          ROS_INFO("[SingleEvent]: coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+          coincidences.push_back(events[it2]);
+
+        } else {  // not coincidence
+          break;
+        }
+      }
+    }
+
+    if (coincidences.size() == 1) {
+      it++;
+      continue;
+    } else if (coincidences.size() > 2) {
+
+      std::stringstream ss;
+
+      for (size_t j = 0; j < coincidences.size(); j++) {
+        ss << coincidences[j].id << " ";
+      }
+
+      ROS_ERROR("[SingleEvent]: %d clusters in coincidence: %s dt: %.2f ns", int(coincidences.size()), ss.str().c_str(),
+                coincidences.back().toa - coincidences.begin()->toa);
+
+      it = it2 + 1;
+      continue;
+    } else {
+      it = it2 + 1;
+    }
+
+    double time_diff = (coincidences[1].toa - coincidences[0].toa);
+    ROS_INFO("[SingleEvent]: 2-cluster coincidence, id1: %lu, id2: %lu, dt: %.2f ns", coincidences[0].id, coincidences[1].id, time_diff);
+
+    SingleEvent electron;
+    SingleEvent photon;
+
+    if (time_diff > 0) {
+      electron = coincidences[1];
+      photon   = coincidences[0];
+    } else {
+      electron = coincidences[0];
+      photon   = coincidences[1];
+    }
+
+    if (_prior_enabled_ && (fabs((photon.energy + electron.energy) - _prior_energy_) > (photon.energy + electron.energy) * 0.2)) {
+      ROS_WARN("[SingleEvent]: events don't fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
+      continue;
+    } else {
+      ROS_INFO("[SingleEvent]: events fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
+    }
+
+    if (photon.energy >= 174.0 && electron.energy <= 477.0) {
+      ROS_INFO("[SingleEvent]: compton is happy");
+    } else {
+      ROS_INFO("[SingleEvent]: compton event rejected, energies don't fit");
+      continue;
+    }
+
+    double z_distance = (time_diff / _time_constant_) * _sensor_thickness_;
+
+    // calculate the cone direction
+    Eigen::Vector3d cone_direction =
+        Eigen::Vector3d(electron.x * _pixel_pitch_ - photon.x * _pixel_pitch_, electron.y * _pixel_pitch_ - photon.y * _pixel_pitch_, z_distance);
+
+    cone_direction.normalize();
+
+    // calculate the scattering angle
+    auto theta_estimate = getComptonAngle(electron.energy, photon.energy);
+
+    if (theta_estimate) {
+
+      double theta = fabs(theta_estimate.value());
+
+      /* cone_direction[0] = 1; */
+      /* cone_direction[1] = 0; */
+      /* cone_direction[2] = 0; */
+      /* cone_direction.normalize(); */
+
+      if (theta > M_PI / 2.0) {
+        theta = M_PI - theta;
+        cone_direction *= -1.0;
+      }
+
+      rad_msgs::Cone cone;
+
+      cone.header.stamp    = electron.stamp;
+      cone.header.frame_id = _world_frame_;  // TODO fix
+
+      // transform the cone direction to the world frame
+      geometry_msgs::Vector3Stamped cone_direction_camera;
+
+      cone_direction_camera.header.stamp    = electron.stamp;
+      cone_direction_camera.header.frame_id = msg->header.frame_id;
+      cone_direction_camera.vector.x        = cone_direction[0];
+      cone_direction_camera.vector.y        = cone_direction[1];
+      cone_direction_camera.vector.z        = cone_direction[2];
+
+      {
+        auto result = transformer_.transformSingle(_world_frame_, cone_direction_camera);
+
+        if (result) {
+
+          cone.direction.x = result.value().vector.x;
+          cone.direction.y = result.value().vector.y;
+          cone.direction.z = result.value().vector.z;
+
         } else {
+
+          ROS_ERROR("[ComptonConeGenerator]: could not transform cone direction (frame: %s, stamp: %f) to the world frame (%s)",
+                    cone_direction_camera.header.frame_id.c_str(), cone_direction_camera.header.stamp.toSec(), _world_frame_.c_str());
           continue;
         }
       }
 
-      SingleEvent electron;
-      SingleEvent photon;
+      geometry_msgs::PoseStamped cone_pose_camera;
 
-      if (time_diff > 0) {
-        electron = events[it2];
-        photon   = events[it];
-      } else {
-        electron = events[it];
-        photon   = events[it2];
+      cone_pose_camera.header.stamp    = electron.stamp;
+      cone_pose_camera.header.frame_id = msg->header.frame_id;
+      cone_pose_camera.pose.position.x = 0;
+      cone_pose_camera.pose.position.y = 0;
+      cone_pose_camera.pose.position.z = 0;
+
+      Eigen::Vector3d e1                = Eigen::Vector3d(1, 0, 0);
+      Eigen::Vector3d axis              = e1.cross(cone_direction);
+      double          angle             = mrs_lib::vectorAngle(e1, cone_direction);
+      cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
+
+      {
+        auto result = transformer_.transformSingle(_world_frame_, cone_pose_camera);
+
+        if (result) {
+
+          cone.pose.position.x = result.value().pose.position.x;
+          cone.pose.position.y = result.value().pose.position.y;
+          cone.pose.position.z = result.value().pose.position.z;
+
+          cone.pose.orientation = result.value().pose.orientation;
+
+        } else {
+
+          ROS_ERROR("[ComptonConeGenerator]: could not transform cone position to the world frame");
+          continue;
+        }
       }
 
-      if (_prior_enabled_ && (fabs((photon.energy + electron.energy) - _prior_energy_) > (photon.energy + electron.energy) * 0.2)) {
-        ROS_WARN("[SingleEvent]: events don't fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
-        continue;
-      } else {
-        ROS_INFO("[SingleEvent]: events fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
+      cone.angle = theta;
+
+      mrs_lib::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, cos(cone.angle) * _plotting_cone_height_,
+                             Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
+
+      if (_plotting_clear_cones_) {
+        batch_vizualizer_.clearBuffers();
+        batch_vizualizer_.clearVisuals();
       }
 
-      if (photon.energy >= 174.0 && electron.energy <= 477.0) {
-        ROS_INFO("[SingleEvent]: compton is happy");
-      } else {
-        ROS_INFO("[SingleEvent]: compton event rejected, energies don't fit");
-        continue;
-      }
+      batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30);
+      batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
 
-      double z_distance = (time_diff / _time_constant_) * _sensor_thickness_;
+      // mirror the cone
+      /* mrs_lib::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
+      /*                        Eigen::Vector3d(-cone.direction.x, -cone.direction.y, -cone.direction.z)); */
+      /* batch_vizualizer_.addCone(cone_vis2, 0.2, 0.8, 0.5, 0.3, true, false, 30); */
 
-      // calculate the cone direction
-      Eigen::Vector3d cone_direction =
-          Eigen::Vector3d(electron.x * _pixel_pitch_ - photon.x * _pixel_pitch_, electron.y * _pixel_pitch_ - photon.y * _pixel_pitch_, z_distance);
+      batch_vizualizer_.publish();
 
-      cone_direction.normalize();
+      publisher_cones_.publish(cone);
 
-      // calculate the scattering angle
-      auto theta_estimate = getComptonAngle(electron.energy, photon.energy);
+      ros::Duration(1.0).sleep();
 
-      if (theta_estimate) {
-
-        double theta = fabs(theta_estimate.value());
-
-        /* cone_direction[0] = 1; */
-        /* cone_direction[1] = 0; */
-        /* cone_direction[2] = 0; */
-        /* cone_direction.normalize(); */
-
-        if (theta > M_PI / 2.0) {
-          theta = M_PI - theta;
-          cone_direction *= -1.0;
-        }
-
-        rad_msgs::Cone cone;
-
-        cone.header.stamp    = electron.stamp;
-        cone.header.frame_id = _world_frame_;  // TODO fix
-
-        // transform the cone direction to the world frame
-        geometry_msgs::Vector3Stamped cone_direction_camera;
-
-        cone_direction_camera.header.stamp    = electron.stamp;
-        cone_direction_camera.header.frame_id = msg->header.frame_id;
-        cone_direction_camera.vector.x        = cone_direction[0];
-        cone_direction_camera.vector.y        = cone_direction[1];
-        cone_direction_camera.vector.z        = cone_direction[2];
-
-        {
-          auto result = transformer_.transformSingle(_world_frame_, cone_direction_camera);
-
-          if (result) {
-
-            cone.direction.x = result.value().vector.x;
-            cone.direction.y = result.value().vector.y;
-            cone.direction.z = result.value().vector.z;
-
-          } else {
-
-            ROS_ERROR("[ComptonConeGenerator]: could not transform cone direction (frame: %s, stamp: %f) to the world frame (%s)",
-                      cone_direction_camera.header.frame_id.c_str(), cone_direction_camera.header.stamp.toSec(), _world_frame_.c_str());
-            continue;
-          }
-        }
-
-        geometry_msgs::PoseStamped cone_pose_camera;
-
-        cone_pose_camera.header.stamp    = electron.stamp;
-        cone_pose_camera.header.frame_id = msg->header.frame_id;
-        cone_pose_camera.pose.position.x = 0;
-        cone_pose_camera.pose.position.y = 0;
-        cone_pose_camera.pose.position.z = 0;
-
-        Eigen::Vector3d e1                = Eigen::Vector3d(1, 0, 0);
-        Eigen::Vector3d axis              = e1.cross(cone_direction);
-        double          angle             = mrs_lib::vectorAngle(e1, cone_direction);
-        cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
-
-        {
-          auto result = transformer_.transformSingle(_world_frame_, cone_pose_camera);
-
-          if (result) {
-
-            cone.pose.position.x = result.value().pose.position.x;
-            cone.pose.position.y = result.value().pose.position.y;
-            cone.pose.position.z = result.value().pose.position.z;
-
-            cone.pose.orientation = result.value().pose.orientation;
-
-          } else {
-
-            ROS_ERROR("[ComptonConeGenerator]: could not transform cone position to the world frame");
-            continue;
-          }
-        }
-
-        cone.angle = theta;
-
-        mrs_lib::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta,
-                               cos(cone.angle) * _plotting_cone_height_, Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
-
-        if (_plotting_clear_cones_) {
-          batch_vizualizer_.clearBuffers();
-          batch_vizualizer_.clearVisuals();
-        }
-
-        batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30);
-        batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
-
-        // mirror the cone
-        /* mrs_lib::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
-        /*                        Eigen::Vector3d(-cone.direction.x, -cone.direction.y, -cone.direction.z)); */
-        /* batch_vizualizer_.addCone(cone_vis2, 0.2, 0.8, 0.5, 0.3, true, false, 30); */
-
-        batch_vizualizer_.publish();
-
-        publisher_cones_.publish(cone);
-
-        ros::Duration(1.0).sleep();
-
-        // mirror the cone
-        /* cone.direction.x *= -1; */
-        /* cone.direction.y *= -1; */
-        /* cone.direction.z *= -1; */
-        /* publisher_cones_.publish(cone); */
-      }
+      // mirror the cone
+      /* cone.direction.x *= -1; */
+      /* cone.direction.y *= -1; */
+      /* cone.direction.z *= -1; */
+      /* publisher_cones_.publish(cone); */
     }
   }
 }
