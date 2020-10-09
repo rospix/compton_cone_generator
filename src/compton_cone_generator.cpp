@@ -265,7 +265,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
         if (time_diff <= _time_constant_) {  // coincidence
 
           if (events[it].id != events[it2].id) {
-            ROS_WARN("[SingleEvent]: false positive coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+            ROS_WARN("[SingleEvent]: false positive coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].id, events[it2].id, events[it].toa, events[it2].toa, time_diff);
           }
 
           coincidences.push_back(events[it2]);
@@ -273,7 +273,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
         } else {  // not coincidence
 
           if (events[it].id == events[it2].id) {
-            ROS_WARN("[SingleEvent]: false negative coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+            ROS_WARN("[SingleEvent]: false negative coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].id, events[it2].id, events[it].toa, events[it2].toa, time_diff);
           }
 
           break;
@@ -283,7 +283,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
         if (events[it].id == events[it2].id) {  // coincidence
 
-          ROS_INFO("[SingleEvent]: coincidence, id1: %lu, id2: %lu, dt: %.2f ns", events[it].id, events[it2].id, time_diff);
+          ROS_INFO("[SingleEvent]: coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].id, events[it2].id, events[it].toa, events[it2].toa, time_diff);
           coincidences.push_back(events[it2]);
 
         } else {  // not coincidence
@@ -293,6 +293,8 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
     }
 
     if (coincidences.size() == 1) {
+      ROS_INFO("[SingleEvent]: no coincidence");
+
       it++;
       continue;
     } else if (coincidences.size() > 2) {
@@ -313,7 +315,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
     }
 
     double time_diff = (coincidences[1].toa - coincidences[0].toa);
-    ROS_INFO("[SingleEvent]: 2-cluster coincidence, id1: %lu, id2: %lu, dt: %.2f ns", coincidences[0].id, coincidences[1].id, time_diff);
+    ROS_INFO("[SingleEvent]: 2-cluster coincidence, cl stamp: %f, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", msg->header.stamp.toSec(), coincidences[0].id, coincidences[1].id, coincidences[0].toa, coincidences[1].toa, time_diff);
 
     SingleEvent electron;
     SingleEvent photon;
