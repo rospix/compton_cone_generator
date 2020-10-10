@@ -30,7 +30,10 @@
 
       <!-- subscribed topics -->
       <remap from="~cluster_list_in" to="compton_camera/cluster_list" />
-      <remap from="~cones_out" to="compton_camera/cones" />
+
+      <!-- published topics -->
+      <remap from="~cones_out" to="~cones" />
+      <remap from="~coincidences_out" to="~coincidences" />
 
     </node>
 

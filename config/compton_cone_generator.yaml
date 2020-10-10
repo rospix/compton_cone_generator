@@ -16,6 +16,16 @@ prior:
   # energy: 59.0 # [kev]
   energy: 662.0 # [kev]
 
+  edges:
+    enabled: true
+    photon: 174.0 # [kev]
+    electron: 477.0 # [kev]
+
+min_pixel_distance:
+
+  enabled: true
+  distance: 15.0 # [px]
+
 plotting:
 
   cone_height: 10.0 # [m]

@@ -53,8 +53,15 @@ public:
   double      _pixel_pitch_;
   std::string _compton_camera_frame_;
   std::string _world_frame_;
-  bool        _prior_enabled_ = false;
-  double      _prior_energy_;
+
+  bool   _prior_enabled_ = false;
+  double _prior_energy_;
+  bool   _prior_edges_enabled_ = false;
+  double _prior_photon_edge_;
+  double _prior_electron_edge_;
+
+  double _min_pixel_distance_;
+  bool   _min_pixel_distance_enabled_;
 
   // | ----------------------- subscribers ---------------------- |
 
@@ -64,6 +71,7 @@ public:
   // | ----------------------- publishers ----------------------- |
 
   ros::Publisher publisher_cones_;
+  ros::Publisher publisher_coincidences_;
 
   // | ----------------------- main timer ----------------------- |
 
@@ -93,30 +101,20 @@ public:
 class SingleEvent {
 
 public:
-  SingleEvent(const double toa, const double energy, const double x, const double y, const unsigned long id, const ros::Time stamp);
+  SingleEvent(const rad_msgs::Cluster &cluster);
   SingleEvent &operator=(const SingleEvent &other);
   SingleEvent(void){};
 
-  double        toa;
-  double        energy;
-  double        x;
-  double        y;
-  unsigned long id;
-  ros::Time     stamp;
-  bool          order;  // 0 = time, 1 = id
+  std::shared_ptr<rad_msgs::Cluster> cluster;
 
-  bool operator<(const SingleEvent &other);
+  bool              operator<(const SingleEvent &other);
+  rad_msgs::Cluster operator()(const SingleEvent &event);
 };
 
 // constructor
-SingleEvent::SingleEvent(const double toa, const double energy, const double x, const double y, const unsigned long id, const ros::Time stamp) {
+SingleEvent::SingleEvent(const rad_msgs::Cluster &cluster) {
 
-  this->toa    = toa;
-  this->energy = energy;
-  this->x      = x;
-  this->y      = y;
-  this->id     = id;
-  this->stamp  = stamp;
+  this->cluster = std::make_shared<rad_msgs::Cluster>(cluster);
 }
 
 SingleEvent &SingleEvent::operator=(const SingleEvent &other) {
@@ -125,12 +123,7 @@ SingleEvent &SingleEvent::operator=(const SingleEvent &other) {
     return *this;
   }
 
-  this->toa    = other.toa;
-  this->energy = other.energy;
-  this->x      = other.x;
-  this->y      = other.y;
-  this->id     = other.id;
-  this->stamp  = other.stamp;
+  this->cluster = other.cluster;
 
   return *this;
 
@@ -138,10 +131,14 @@ SingleEvent &SingleEvent::operator=(const SingleEvent &other) {
 
 bool SingleEvent::operator<(const SingleEvent &other) {
   if (_coincidence_matching_method_ == 0) {
-    return this->toa < other.toa;
+    return this->cluster->toa < other.cluster->toa;
   } else {
-    return this->id < other.id;
+    return this->cluster->id < other.cluster->id;
   }
+}
+
+rad_msgs::Cluster SingleEvent::operator()(const SingleEvent &event) {
+  return *event.cluster;
 }
 
 //}
@@ -162,6 +159,12 @@ void ComptonConeGenerator::onInit() {
 
   param_loader.loadParam("prior/enabled", _prior_enabled_);
   param_loader.loadParam("prior/energy", _prior_energy_);
+  param_loader.loadParam("prior/edges/enabled", _prior_edges_enabled_);
+  param_loader.loadParam("prior/edges/photon", _prior_photon_edge_);
+  param_loader.loadParam("prior/edges/electron", _prior_electron_edge_);
+
+  param_loader.loadParam("min_pixel_distance/enabled", _min_pixel_distance_enabled_);
+  param_loader.loadParam("min_pixel_distance/distance", _min_pixel_distance_);
 
   param_loader.loadParam("plotting/cone_height", _plotting_cone_height_);
   param_loader.loadParam("plotting/clear_cones", _plotting_clear_cones_);
@@ -198,7 +201,8 @@ void ComptonConeGenerator::onInit() {
 
   // | ----------------------- publishers ----------------------- |
 
-  publisher_cones_ = nh_.advertise<rad_msgs::Cone>("cones_out", 1);
+  publisher_cones_        = nh_.advertise<rad_msgs::Cone>("cones_out", 1);
+  publisher_coincidences_ = nh_.advertise<rad_msgs::ClusterList>("coincidences_out", 1);
 
   // | ------------------------- timers ------------------------- |
 
@@ -240,7 +244,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
   // put the cluster into a list
   for (size_t i = 0; i < msg->clusters.size(); i++) {
 
-    SingleEvent event(msg->clusters[i].toa, msg->clusters[i].energy, msg->clusters[i].x, msg->clusters[i].y, msg->clusters[i].id, msg->clusters[i].stamp);
+    SingleEvent event(msg->clusters[i]);
 
     events.push_back(event);
   }
@@ -258,22 +262,24 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
     size_t it2 = it + 1;
     for (; it2 < events.size(); it2++) {
 
-      double time_diff = (events[it2].toa - events[it].toa);
+      double time_diff = (events[it2].cluster->toa - events[it].cluster->toa);
 
       if (_coincidence_matching_method_ == 0) {
 
         if (time_diff <= _time_constant_) {  // coincidence
 
-          if (events[it].id != events[it2].id) {
-            ROS_WARN("[SingleEvent]: false positive coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].id, events[it2].id, events[it].toa, events[it2].toa, time_diff);
+          if (events[it].cluster->id != events[it2].cluster->id) {
+            ROS_WARN("[SingleEvent]: false positive coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].cluster->id,
+                     events[it2].cluster->id, events[it].cluster->toa, events[it2].cluster->toa, time_diff);
           }
 
           coincidences.push_back(events[it2]);
 
         } else {  // not coincidence
 
-          if (events[it].id == events[it2].id) {
-            ROS_WARN("[SingleEvent]: false negative coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].id, events[it2].id, events[it].toa, events[it2].toa, time_diff);
+          if (events[it].cluster->id == events[it2].cluster->id) {
+            ROS_WARN("[SingleEvent]: false negative coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].cluster->id,
+                     events[it2].cluster->id, events[it].cluster->toa, events[it2].cluster->toa, time_diff);
           }
 
           break;
@@ -281,9 +287,10 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       } else {
 
-        if (events[it].id == events[it2].id) {  // coincidence
+        if (events[it].cluster->id == events[it2].cluster->id) {  // coincidence
 
-          ROS_INFO("[SingleEvent]: coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].id, events[it2].id, events[it].toa, events[it2].toa, time_diff);
+          ROS_INFO("[SingleEvent]: coincidence, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", events[it].cluster->id, events[it2].cluster->id,
+                   events[it].cluster->toa, events[it2].cluster->toa, time_diff);
           coincidences.push_back(events[it2]);
 
         } else {  // not coincidence
@@ -302,20 +309,22 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       std::stringstream ss;
 
       for (size_t j = 0; j < coincidences.size(); j++) {
-        ss << coincidences[j].id << " ";
+        ss << coincidences[j].cluster->id << " ";
       }
 
       ROS_ERROR("[SingleEvent]: %d clusters in coincidence: %s dt: %.2f ns", int(coincidences.size()), ss.str().c_str(),
-                coincidences.back().toa - coincidences.begin()->toa);
+                coincidences.back().cluster->toa - coincidences.begin()->cluster->toa);
 
       it = it2 + 1;
       continue;
     } else {
+
       it = it2 + 1;
     }
 
-    double time_diff = (coincidences[1].toa - coincidences[0].toa);
-    ROS_INFO("[SingleEvent]: 2-cluster coincidence, cl stamp: %f, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", msg->header.stamp.toSec(), coincidences[0].id, coincidences[1].id, coincidences[0].toa, coincidences[1].toa, time_diff);
+    double time_diff = (coincidences[1].cluster->toa - coincidences[0].cluster->toa);
+    ROS_INFO("[SingleEvent]: 2-cluster coincidence, cl stamp: %f, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", msg->header.stamp.toSec(),
+             coincidences[0].cluster->id, coincidences[1].cluster->id, coincidences[0].cluster->toa, coincidences[1].cluster->toa, time_diff);
 
     SingleEvent electron;
     SingleEvent photon;
@@ -328,30 +337,46 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       photon   = coincidences[1];
     }
 
-    if (_prior_enabled_ && (fabs((photon.energy + electron.energy) - _prior_energy_) > (photon.energy + electron.energy) * 0.2)) {
-      ROS_WARN("[SingleEvent]: events don't fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
+    if (_min_pixel_distance_enabled_ &&
+        sqrt(pow(photon.cluster->x - electron.cluster->x, 2) + pow(photon.cluster->y - electron.cluster->y, 2)) < _min_pixel_distance_) {
+
+      ROS_WARN("[SingleEvent]: events are too close");
       continue;
-    } else {
-      ROS_INFO("[SingleEvent]: events fit, e1 = %.2f, e2 = %.2f", photon.energy, electron.energy);
     }
 
-    if (photon.energy >= 174.0 && electron.energy <= 477.0) {
-      ROS_INFO("[SingleEvent]: compton is happy");
-    } else {
-      ROS_INFO("[SingleEvent]: compton event rejected, energies don't fit");
+    if (_prior_enabled_ &&
+        (fabs((photon.cluster->energy + electron.cluster->energy) - _prior_energy_) > (photon.cluster->energy + electron.cluster->energy) * 0.2)) {
+      ROS_WARN("[SingleEvent]: energies don't fit, e1 = %.2f, e2 = %.2f", photon.cluster->energy, electron.cluster->energy);
       continue;
+    }
+
+    if (_prior_edges_enabled_ && (photon.cluster->energy < _prior_photon_edge_ || electron.cluster->energy > _prior_electron_edge_)) {
+      ROS_INFO("[SingleEvent]: edge energy violated");
+      continue;
+    }
+
+    ROS_INFO("[SingleEvent]: events fit, photon = %.2f, electron = %.2f", photon.cluster->energy, electron.cluster->energy);
+
+    {  // coincidences will be republished as a new cluster list
+      rad_msgs::ClusterList cluster_list_coincidences;
+      cluster_list_coincidences.header = msg->header;
+
+      cluster_list_coincidences.clusters.push_back(*coincidences[0].cluster);
+      cluster_list_coincidences.clusters.push_back(*coincidences[1].cluster);
+
+      publisher_coincidences_.publish(cluster_list_coincidences);
     }
 
     double z_distance = (time_diff / _time_constant_) * _sensor_thickness_;
 
     // calculate the cone direction
-    Eigen::Vector3d cone_direction =
-        Eigen::Vector3d(electron.x * _pixel_pitch_ - photon.x * _pixel_pitch_, electron.y * _pixel_pitch_ - photon.y * _pixel_pitch_, z_distance);
+    Eigen::Vector3d cone_direction = Eigen::Vector3d(electron.cluster->x * _pixel_pitch_ - photon.cluster->x * _pixel_pitch_,
+                                                     electron.cluster->y * _pixel_pitch_ - photon.cluster->y * _pixel_pitch_, z_distance);
 
     cone_direction.normalize();
 
     // calculate the scattering angle
-    auto theta_estimate = getComptonAngle(electron.energy, photon.energy);
+    auto theta_estimate = getComptonAngle(electron.cluster->energy, photon.cluster->energy);
 
     if (theta_estimate) {
 
@@ -369,13 +394,13 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       rad_msgs::Cone cone;
 
-      cone.header.stamp    = electron.stamp;
+      cone.header.stamp    = electron.cluster->stamp;
       cone.header.frame_id = _world_frame_;  // TODO fix
 
       // transform the cone direction to the world frame
       geometry_msgs::Vector3Stamped cone_direction_camera;
 
-      cone_direction_camera.header.stamp    = electron.stamp;
+      cone_direction_camera.header.stamp    = electron.cluster->stamp;
       cone_direction_camera.header.frame_id = msg->header.frame_id;
       cone_direction_camera.vector.x        = cone_direction[0];
       cone_direction_camera.vector.y        = cone_direction[1];
@@ -400,7 +425,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       geometry_msgs::PoseStamped cone_pose_camera;
 
-      cone_pose_camera.header.stamp    = electron.stamp;
+      cone_pose_camera.header.stamp    = electron.cluster->stamp;
       cone_pose_camera.header.frame_id = msg->header.frame_id;
       cone_pose_camera.pose.position.x = 0;
       cone_pose_camera.pose.position.y = 0;
