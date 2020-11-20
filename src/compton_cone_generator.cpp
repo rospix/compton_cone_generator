@@ -9,7 +9,8 @@
 #include <Eigen/Eigen>
 
 #include <mrs_lib/param_loader.h>
-#include <mrs_lib/geometry_utils.h>
+#include <mrs_lib/geometry/misc.h>
+#include <mrs_lib/geometry/cyclic.h>
 #include <mrs_lib/mutex.h>
 #include <mrs_lib/transformer.h>
 #include <mrs_lib/attitude_converter.h>
@@ -21,6 +22,16 @@
 
 #include <dynamic_reconfigure/server.h>
 #include <compton_cone_generator/compton_cone_generatorConfig.h>
+
+//}
+
+/* using //{ */
+
+using vec2_t = mrs_lib::geometry::vec_t<2>;
+using vec3_t = mrs_lib::geometry::vec_t<3>;
+
+using radians  = mrs_lib::geometry::radians;
+using sradians = mrs_lib::geometry::sradians;
 
 //}
 
@@ -433,7 +444,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       Eigen::Vector3d e1                = Eigen::Vector3d(1, 0, 0);
       Eigen::Vector3d axis              = e1.cross(cone_direction);
-      double          angle             = mrs_lib::vectorAngle(e1, cone_direction);
+      double          angle             = mrs_lib::geometry::angleBetween(e1, cone_direction);
       cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
 
       {
@@ -456,7 +467,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       cone.angle = theta;
 
-      mrs_lib::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, cos(cone.angle) * _plotting_cone_height_,
+      mrs_lib::geometry::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, cos(cone.angle) * _plotting_cone_height_,
                              Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
 
       if (_plotting_clear_cones_) {
@@ -468,7 +479,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
 
       // mirror the cone
-      /* mrs_lib::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
+      /* mrs_lib::geometry::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
       /*                        Eigen::Vector3d(-cone.direction.x, -cone.direction.y, -cone.direction.z)); */
       /* batch_vizualizer_.addCone(cone_vis2, 0.2, 0.8, 0.5, 0.3, true, false, 30); */
 
