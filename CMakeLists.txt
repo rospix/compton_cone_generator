@@ -19,7 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   cmake_modules
   rad_msgs
   mrs_msgs
-  radiation_utils
+  rad_utils
   mrs_lib
   dynamic_reconfigure
   message_generation
@@ -30,7 +30,7 @@ generate_dynamic_reconfigure_options(
   )
 
 catkin_package(
-   CATKIN_DEPENDS nodelet rospy std_msgs message_runtime rad_msgs mrs_lib radiation_utils mrs_msgs
+   CATKIN_DEPENDS nodelet rospy std_msgs message_runtime rad_msgs mrs_lib rad_utils mrs_msgs
    LIBRARIES ComptonConeGenerator
    DEPENDS Eigen
 )

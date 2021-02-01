@@ -18,7 +18,7 @@
 
 #include <geometry_msgs/Vector3Stamped.h>
 
-#include <radiation_utils/physics.h>
+#include <rad_utils/physics.h>
 
 #include <dynamic_reconfigure/server.h>
 #include <compton_cone_generator/compton_cone_generatorConfig.h>
