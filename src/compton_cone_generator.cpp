@@ -62,7 +62,6 @@ public:
   double      _sensor_thickness_;
   double      _time_constant_;
   double      _pixel_pitch_;
-  std::string _compton_camera_frame_;
   std::string _world_frame_;
 
   bool   _prior_enabled_ = false;
@@ -182,7 +181,6 @@ void ComptonConeGenerator::onInit() {
 
   param_loader.loadParam("uav_name", _uav_name_);
   param_loader.loadParam("world_frame", _world_frame_);
-  param_loader.loadParam("compton_camera_frame", _compton_camera_frame_);
 
   param_loader.loadParam("main_timer_rate", _main_timer_rate_);
 

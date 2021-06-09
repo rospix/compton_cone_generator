@@ -2,7 +2,6 @@
 
   <arg name="uav_name" default="$(optenv UAV_NAME uav)" />
 
-  <arg name="compton_camera_frame" default="$(arg uav_name)/compton_camera" />
   <arg name="world_frame" default="$(arg uav_name)/stable_origin" />
   <!-- <arg name="world_frame" default="$(arg uav_name)/hector_origin" /> -->
   <!-- <arg name="world_frame" default="$(arg uav_name)/fcu" /> -->
@@ -25,7 +24,6 @@
       <rosparam file="$(find compton_cone_generator)/config/compton_cone_generator.yaml" command="load" />
 
       <param name="uav_name" value="$(arg uav_name)" />
-      <param name="compton_camera_frame" value="$(arg compton_camera_frame)" />
       <param name="world_frame" value="$(arg world_frame)" />
 
       <!-- subscribed topics -->
