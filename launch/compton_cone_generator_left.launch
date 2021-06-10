@@ -1,0 +1,40 @@
+<launch>
+
+  <arg name="uav_name" default="$(optenv UAV_NAME uav)" />
+
+  <arg name="world_frame" default="$(arg uav_name)/stable_origin" />
+  <!-- <arg name="world_frame" default="$(arg uav_name)/hector_origin" /> -->
+  <!-- <arg name="world_frame" default="$(arg uav_name)/fcu" /> -->
+
+  <arg name="debug" default="false" />
+  <arg name="standalone" default="true" />
+
+  <arg     if="$(arg debug)" name="launch_prefix" value="debug_roslaunch" />
+  <arg unless="$(arg debug)" name="launch_prefix" value="" />
+
+  <arg     if="$(eval arg('standalone') or arg('debug'))" name="nodelet" value="standalone" />
+  <arg unless="$(eval arg('standalone') or arg('debug'))" name="nodelet" value="load" />
+  <arg     if="$(eval arg('standalone') or arg('debug'))" name="nodelet_manager" value="" />
+  <arg unless="$(eval arg('standalone') or arg('debug'))" name="nodelet_manager" value="$(arg UAV_NAME)_nodelet_manager" />
+
+  <group ns="$(arg uav_name)">
+
+    <node name="compton_cone_generator_left" pkg="nodelet" type="nodelet" args="standalone compton_cone_generator/ComptonConeGenerator" output="screen" launch-prefix="$(arg launch_prefix)">
+
+      <rosparam file="$(find compton_cone_generator)/config/compton_cone_generator.yaml" command="load" />
+
+      <param name="uav_name" value="$(arg uav_name)" />
+      <param name="world_frame" value="$(arg world_frame)" />
+
+      <!-- subscribed topics -->
+      <remap from="~cluster_list_in" to="compton_camera_left/cluster_list" />
+
+      <!-- published topics -->
+      <remap from="~cones_out" to="compton_cone_generator/cones" />
+      <remap from="~coincidences_out" to="~coincidences" />
+
+    </node>
+
+  </group>
+
+</launch>
