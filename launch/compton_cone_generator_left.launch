@@ -28,7 +28,7 @@
       <param name="world_frame" value="$(arg world_frame)" />
 
       <!-- subscribed topics -->
-      <remap from="~cluster_list_in" to="compton_camera_left/cluster_list" />
+      <remap from="~cluster_list_in" to="rospix3/left/cluster_list" />
 
       <!-- published topics -->
       <remap from="~cones_out" to="compton_cone_generator/cones" />
