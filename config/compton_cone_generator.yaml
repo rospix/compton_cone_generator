@@ -24,7 +24,7 @@ prior:
 min_pixel_distance:
 
   enabled: true
-  distance: 15.0 # [px]
+  distance: 5.0 # [px]
 
 plotting:
 
