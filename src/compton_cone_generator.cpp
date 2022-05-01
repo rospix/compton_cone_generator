@@ -195,7 +195,7 @@ void ComptonConeGenerator::onInit() {
 
   // | ----------------------- transformer ---------------------- |
 
-  transformer_ = mrs_lib::Transformer("ComptonConeGenerator", _uav_name_);
+  transformer_ = mrs_lib::Transformer(nh_, "ComptonConeGenerator");
 
   // | -------------------- batch visualizer -------------------- |
 
@@ -416,7 +416,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       cone_direction_camera.vector.z        = cone_direction[2];
 
       {
-        auto result = transformer_.transformSingle(_world_frame_, cone_direction_camera);
+        auto result = transformer_.transformSingle(cone_direction_camera, _world_frame_);
 
         if (result) {
 
@@ -446,7 +446,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
 
       {
-        auto result = transformer_.transformSingle(_world_frame_, cone_pose_camera);
+        auto result = transformer_.transformSingle(cone_pose_camera, _world_frame_);
 
         if (result) {
 
@@ -465,8 +465,8 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
       cone.angle = theta;
 
-      mrs_lib::geometry::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, cos(cone.angle) * _plotting_cone_height_,
-                             Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
+      mrs_lib::geometry::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta,
+                                       cos(cone.angle) * _plotting_cone_height_, Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
 
       if (_plotting_clear_cones_) {
         batch_vizualizer_.clearBuffers();
