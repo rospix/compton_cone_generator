@@ -50,7 +50,7 @@ public:
   ros::NodeHandle nh_;
   bool            is_initialized_ = false;
 
-  mrs_lib::Transformer transformer_;
+  std::shared_ptr<mrs_lib::Transformer> transformer_;
 
   mrs_lib::BatchVisualizer batch_vizualizer_;
 
@@ -195,7 +195,9 @@ void ComptonConeGenerator::onInit() {
 
   // | ----------------------- transformer ---------------------- |
 
-  transformer_ = mrs_lib::Transformer(nh_, "ComptonConeGenerator");
+  transformer_ = std::make_shared<mrs_lib::Transformer>(nh_, "ComptonConeGenerator");
+  transformer_->setDefaultPrefix(_uav_name_);
+  transformer_->retryLookupNewest(true);
 
   // | -------------------- batch visualizer -------------------- |
 
@@ -416,7 +418,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       cone_direction_camera.vector.z        = cone_direction[2];
 
       {
-        auto result = transformer_.transformSingle(cone_direction_camera, _world_frame_);
+        auto result = transformer_->transformSingle(cone_direction_camera, _world_frame_);
 
         if (result) {
 
@@ -446,7 +448,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
       cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
 
       {
-        auto result = transformer_.transformSingle(cone_pose_camera, _world_frame_);
+        auto result = transformer_->transformSingle(cone_pose_camera, _world_frame_);
 
         if (result) {
 

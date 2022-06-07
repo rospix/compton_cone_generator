@@ -31,8 +31,10 @@
       <remap from="~cluster_list_in" to="rospix3/left/cluster_list" />
 
       <!-- published topics -->
-      <remap from="~cones_out" to="compton_cone_generator/cones" />
-      <remap from="~coincidences_out" to="~coincidences" />
+      <!-- <remap from="~cones_out" to="compton_cone_generator/cones" /> -->
+      <remap from="~cones_out" to="/cones" />
+      <!-- <remap from="~coincidences_out" to="~coincidences" /> -->
+      <remap from="~coincidences_out" to="/coincidences" />
 
     </node>
 
