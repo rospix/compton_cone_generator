@@ -17,6 +17,7 @@
   <depend>roscpp</depend>
   <depend>message_runtime</depend>
   <depend>rad_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>mrs_msgs</depend>
   <depend>rad_utils</depend>
   <depend>mrs_lib</depend>

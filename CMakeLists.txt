@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   nodelet
   cmake_modules
   rad_msgs
+  sensor_msgs
   mrs_msgs
   rad_utils
   mrs_lib
@@ -30,8 +31,8 @@ generate_dynamic_reconfigure_options(
   )
 
 catkin_package(
-   CATKIN_DEPENDS nodelet rospy std_msgs message_runtime rad_msgs mrs_lib rad_utils mrs_msgs
-   LIBRARIES ComptonConeGenerator
+   CATKIN_DEPENDS nodelet rospy std_msgs message_runtime rad_msgs mrs_lib rad_utils mrs_msgs sensor_msgs
+   LIBRARIES ComptonConeGenerator ConeAggregator
    DEPENDS Eigen
 )
 
@@ -48,6 +49,17 @@ target_link_libraries(ComptonConeGenerator
   )
 
 add_dependencies(ComptonConeGenerator
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+  )
+
+add_library(ConeAggregator src/cone_aggregator.cpp)
+
+target_link_libraries(ConeAggregator
+  ${catkin_LIBRARIES}
+  )
+
+add_dependencies(ConeAggregator
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
   )

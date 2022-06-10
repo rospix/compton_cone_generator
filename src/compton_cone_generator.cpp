@@ -15,6 +15,9 @@
 #include <mrs_lib/transformer.h>
 #include <mrs_lib/attitude_converter.h>
 #include <mrs_lib/batch_visualizer.h>
+#include <mrs_lib/subscribe_handler.h>
+
+#include <sensor_msgs/NavSatFix.h>
 
 #include <geometry_msgs/Vector3Stamped.h>
 
@@ -77,6 +80,9 @@ public:
 
   ros::Subscriber subscriber_cluster_list_;
   void            callbackClusterList(const rad_msgs::ClusterListConstPtr &msg);
+
+  mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix> sh_mavros_gps_;
+  void                                              callbackMavrosGps(mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix> &wrp);
 
   // | ----------------------- publishers ----------------------- |
 
@@ -153,7 +159,7 @@ rad_msgs::Cluster SingleEvent::operator()(const SingleEvent &event) {
 
 //}
 
-/* inInit() //{ */
+/* onInit() //{ */
 
 void ComptonConeGenerator::onInit() {
 
@@ -209,6 +215,17 @@ void ComptonConeGenerator::onInit() {
   // | ----------------------- subscribers ---------------------- |
 
   subscriber_cluster_list_ = nh_.subscribe("cluster_list_in", 1, &ComptonConeGenerator::callbackClusterList, this, ros::TransportHints().tcpNoDelay());
+
+  mrs_lib::SubscribeHandlerOptions shopts;
+  shopts.nh                 = nh_;
+  shopts.node_name          = "ComptonConeGenerator";
+  shopts.no_message_timeout = mrs_lib::no_timeout;
+  shopts.threadsafe         = true;
+  shopts.autostart          = true;
+  shopts.queue_size         = 10;
+  shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
+
+  sh_mavros_gps_ = mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix>(shopts, "mavros_gps_in", &ComptonConeGenerator::callbackMavrosGps, this);
 
   // | ----------------------- publishers ----------------------- |
 
@@ -511,6 +528,23 @@ void ComptonConeGenerator::callbackDrs(compton_cone_generator::compton_cone_gene
   }
 
   ROS_INFO("[ComptonConeGenerator]: updated drs params");
+}
+
+//}
+
+/* callbackMavrosGps() //{ */
+
+void ComptonConeGenerator::callbackMavrosGps(mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix> &wrp) {
+
+  if (!is_initialized_) {
+    return;
+  }
+
+  ROS_INFO_ONCE("[SingleEvent]: getting mavros gps");
+
+  sensor_msgs::NavSatFixConstPtr data = wrp.getMsg();
+
+  transformer_->setLatLon(data->latitude, data->longitude);
 }
 
 //}
