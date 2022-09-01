@@ -7,6 +7,8 @@
   <arg name="debug" default="false" />
   <arg name="standalone" default="true" />
 
+  <arg name="custom_config" default="" />
+
   <arg     if="$(arg debug)" name="launch_prefix" value="debug_roslaunch" />
   <arg unless="$(arg debug)" name="launch_prefix" value="" />
 
@@ -20,6 +22,8 @@
     <node name="compton_cone_generator_right" pkg="nodelet" type="nodelet" args="standalone compton_cone_generator/ComptonConeGenerator" output="screen" launch-prefix="$(arg launch_prefix)">
 
       <rosparam file="$(find compton_cone_generator)/config/compton_cone_generator.yaml" command="load" />
+
+      <rosparam if="$(eval not arg('custom_config') == '')" file="$(arg custom_config)" />
 
       <param name="uav_name" value="$(arg uav_name)" />
       <param name="world_frame" value="$(arg world_frame)" />
