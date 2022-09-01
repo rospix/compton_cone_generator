@@ -65,7 +65,7 @@ void ConeAggregator::onInit() {
 
   mrs_lib::ParamLoader param_loader(nh_, "ConeAggregator");
 
-  param_loader.loadParam("uav_names", _uav_names_);
+  param_loader.loadParam("network/robot_names", _uav_names_);
   param_loader.loadParam("uav_name", _uav_name_);
   param_loader.loadParam("topic_name", _topic_name_);
   param_loader.loadParam("target_frame", _target_frame_);
