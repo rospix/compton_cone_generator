@@ -8,6 +8,7 @@
   <arg name="target_frame" default="$(arg uav_name)/gps_origin" />
 
   <arg name="custom_config" default="" />
+  <arg name="uav_names" default="" />
 
   <arg     if="$(arg debug)" name="launch_prefix" value="debug_roslaunch" />
   <arg unless="$(arg debug)" name="launch_prefix" value="" />
@@ -24,6 +25,7 @@
       <rosparam file="$(find compton_cone_generator)/config/cone_aggregator.yaml" command="load" />
 
       <rosparam if="$(eval not arg('custom_config') == '')" file="$(arg custom_config)" />
+      <rosparam if="$(eval not arg('uav_names') == '')" file="$(arg uav_names)" />
 
       <param name="topic_name" value="compton_cone_generator/cones" />
       <param name="uav_name" value="$(arg uav_name)" />
