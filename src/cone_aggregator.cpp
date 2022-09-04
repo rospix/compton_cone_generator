@@ -12,6 +12,7 @@
 #include <mrs_lib/subscribe_handler.h>
 #include <mrs_lib/publisher_handler.h>
 #include <mrs_lib/transformer.h>
+#include <mrs_lib/batch_visualizer.h>
 
 //}
 
@@ -41,6 +42,10 @@ public:
   // | -------------------- the transformer  -------------------- |
 
   std::shared_ptr<mrs_lib::Transformer> transformer_;
+
+  // | -------------------- batch visualizer -------------------- |
+
+  mrs_lib::BatchVisualizer batch_vizualizer_;
 
   // | ------------------------- params ------------------------- |
 
@@ -84,6 +89,13 @@ void ConeAggregator::onInit() {
   transformer_ = std::make_shared<mrs_lib::Transformer>(nh_, "ConeAggregator");
   transformer_->setDefaultPrefix(_uav_name_);
   transformer_->retryLookupNewest(true);
+
+  // | -------------------- batch visualizer -------------------- |
+
+  batch_vizualizer_ = mrs_lib::BatchVisualizer(nh_, "compton_cones", _target_frame_);
+
+  batch_vizualizer_.clearBuffers();
+  batch_vizualizer_.clearVisuals();
 
   // | ----------------------- subscribers ---------------------- |
 
@@ -158,6 +170,19 @@ void ConeAggregator::callbackCone(mrs_lib::SubscribeHandler<rad_msgs::Cone>& sh_
     cone_tfed_.direction.x = res2->vector.x;
     cone_tfed_.direction.y = res2->vector.y;
     cone_tfed_.direction.z = res2->vector.z;
+
+    cone_tfed_.angle = msg->angle;
+
+    batch_vizualizer_.clearBuffers();
+    batch_vizualizer_.clearVisuals();
+
+    mrs_lib::geometry::Cone cone_vis(Eigen::Vector3d(cone_tfed_.pose.position.x, cone_tfed_.pose.position.y, cone_tfed_.pose.position.z), cone_tfed_.angle,
+                                     cos(cone_tfed_.angle) * 10.0, Eigen::Vector3d(cone_tfed_.direction.x, cone_tfed_.direction.y, cone_tfed_.direction.z));
+
+    batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30);
+    batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
+
+    batch_vizualizer_.publish();
 
   } else {
 
