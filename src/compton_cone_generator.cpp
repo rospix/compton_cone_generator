@@ -78,11 +78,12 @@ public:
 
   // | ----------------------- subscribers ---------------------- |
 
-  ros::Subscriber subscriber_cluster_list_;
-  void            callbackClusterList(const rad_msgs::ClusterListConstPtr &msg);
-
+  mrs_lib::SubscribeHandler<rad_msgs::ClusterList>  sh_cluster_list_;
   mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix> sh_mavros_gps_;
-  void                                              callbackMavrosGps(mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix> &wrp);
+
+  void callbackClusterList(const rad_msgs::ClusterList::ConstPtr msg);
+  void callbackMavrosGps(const sensor_msgs::NavSatFix::ConstPtr msg);
+  void callbackTimeout(const std::string &topic, const ros::Time &last_msg_time);
 
   // | ----------------------- publishers ----------------------- |
 
@@ -214,7 +215,6 @@ void ComptonConeGenerator::onInit() {
 
   // | ----------------------- subscribers ---------------------- |
 
-  subscriber_cluster_list_ = nh_.subscribe("cluster_list_in", 1, &ComptonConeGenerator::callbackClusterList, this, ros::TransportHints().tcpNoDelay());
 
   mrs_lib::SubscribeHandlerOptions shopts;
   shopts.nh                 = nh_;
@@ -224,8 +224,13 @@ void ComptonConeGenerator::onInit() {
   shopts.autostart          = true;
   shopts.queue_size         = 10;
   shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
+  shopts.no_message_timeout = ros::Duration(10.0);
 
-  sh_mavros_gps_ = mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix>(shopts, "mavros_gps_in", &ComptonConeGenerator::callbackMavrosGps, this);
+  sh_cluster_list_ = mrs_lib::SubscribeHandler<rad_msgs::ClusterList>(shopts, "cluster_list_in", &ComptonConeGenerator::callbackTimeout, this,
+                                                                      &ComptonConeGenerator::callbackClusterList, this);
+
+  sh_mavros_gps_ = mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix>(shopts, "mavros_gps_in", &ComptonConeGenerator::callbackTimeout, this,
+                                                                     &ComptonConeGenerator::callbackMavrosGps, this);
 
   // | ----------------------- publishers ----------------------- |
 
@@ -256,7 +261,7 @@ void ComptonConeGenerator::onInit() {
 
 /* callbackClusterList() //{ */
 
-void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstPtr &msg) {
+void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterList::ConstPtr msg) {
 
   if (!is_initialized_)
     return;
@@ -517,6 +522,30 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterListConstP
 
 //}
 
+/* callbackMavrosGps() //{ */
+
+void ComptonConeGenerator::callbackMavrosGps(const sensor_msgs::NavSatFix::ConstPtr msg) {
+
+  if (!is_initialized_) {
+    return;
+  }
+
+  ROS_INFO_ONCE("[SingleEvent]: getting mavros gps");
+
+  transformer_->setLatLon(msg->latitude, msg->longitude);
+}
+
+//}
+
+/* callbackTimeout() //{ */
+void ComptonConeGenerator::callbackTimeout(const std::string &topic, const ros::Time &last_msg_time) {
+  if (!is_initialized_) {
+    return;
+  }
+  ROS_ERROR("[SingleEvent]: Did not receive a message on topic %s for %.2f seconds", topic.c_str(), (ros::Time::now() - last_msg_time).toSec());
+}
+//}
+
 /* callbackDrs() //{ */
 
 void ComptonConeGenerator::callbackDrs(compton_cone_generator::compton_cone_generatorConfig &drs_config_t, [[maybe_unused]] uint32_t level) {
@@ -531,24 +560,6 @@ void ComptonConeGenerator::callbackDrs(compton_cone_generator::compton_cone_gene
 }
 
 //}
-
-/* callbackMavrosGps() //{ */
-
-void ComptonConeGenerator::callbackMavrosGps(mrs_lib::SubscribeHandler<sensor_msgs::NavSatFix> &wrp) {
-
-  if (!is_initialized_) {
-    return;
-  }
-
-  ROS_INFO_ONCE("[SingleEvent]: getting mavros gps");
-
-  sensor_msgs::NavSatFixConstPtr data = wrp.getMsg();
-
-  transformer_->setLatLon(data->latitude, data->longitude);
-}
-
-//}
-
 // | ------------------------- timers ------------------------- |
 
 /* mainTimer() //{ */

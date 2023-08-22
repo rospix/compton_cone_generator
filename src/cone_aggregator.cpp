@@ -33,7 +33,8 @@ public:
 
   std::vector<mrs_lib::SubscribeHandler<rad_msgs::Cone>> sh_cones_;
 
-  void callbackCone(mrs_lib::SubscribeHandler<rad_msgs::Cone>& sh_ptr);
+  void callbackCone(const rad_msgs::Cone::ConstPtr sh_ptr);
+  void callbackTimeout(const std::string &topic_name, const ros::Time &last_msg_time);
 
   // | ----------------------- publishers ----------------------- |
 
@@ -107,6 +108,7 @@ void ConeAggregator::onInit() {
   shopts.autostart          = true;
   shopts.queue_size         = 10;
   shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
+  shopts.no_message_timeout = ros::Duration(10.0);
 
   for (int i = 0; i < int(_uav_names_.size()); i++) {
 
@@ -114,7 +116,8 @@ void ConeAggregator::onInit() {
 
     ROS_INFO("[MpcTracker]: subscribing to %s", topic_name.c_str());
 
-    sh_cones_.push_back(mrs_lib::SubscribeHandler<rad_msgs::Cone>(shopts, topic_name, &ConeAggregator::callbackCone, this));
+    sh_cones_.push_back(
+        mrs_lib::SubscribeHandler<rad_msgs::Cone>(shopts, topic_name, &ConeAggregator::callbackTimeout, this, &ConeAggregator::callbackCone, this));
   }
 
   // | ----------------------- finish init ---------------------- |
@@ -128,13 +131,11 @@ void ConeAggregator::onInit() {
 
 /* callbackCone() //{ */
 
-void ConeAggregator::callbackCone(mrs_lib::SubscribeHandler<rad_msgs::Cone>& sh_ptr) {
+void ConeAggregator::callbackCone(const rad_msgs::Cone::ConstPtr msg) {
 
   if (!is_initialized_) {
     return;
   }
-
-  auto msg = sh_ptr.getMsg();
 
   // transform the cone to the
 
@@ -173,14 +174,14 @@ void ConeAggregator::callbackCone(mrs_lib::SubscribeHandler<rad_msgs::Cone>& sh_
 
     cone_tfed_.angle = msg->angle;
 
-    batch_vizualizer_.clearBuffers();
-    batch_vizualizer_.clearVisuals();
+    /* batch_vizualizer_.clearBuffers(); */
+    /* batch_vizualizer_.clearVisuals(); */
 
     mrs_lib::geometry::Cone cone_vis(Eigen::Vector3d(cone_tfed_.pose.position.x, cone_tfed_.pose.position.y, cone_tfed_.pose.position.z), cone_tfed_.angle,
                                      cos(cone_tfed_.angle) * 10.0, Eigen::Vector3d(cone_tfed_.direction.x, cone_tfed_.direction.y, cone_tfed_.direction.z));
 
-    batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30);
-    batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
+    batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30, ros::Duration(2.0));
+    /* batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30, ros::Duration(2.0)); */
 
     batch_vizualizer_.publish();
 
@@ -193,6 +194,15 @@ void ConeAggregator::callbackCone(mrs_lib::SubscribeHandler<rad_msgs::Cone>& sh_
   ph_cones_.publish(cone_tfed_);
 }
 
+//}
+
+/* callbackTimeout() //{ */
+void ConeAggregator::callbackTimeout(const std::string &topic_name, const ros::Time &last_msg_time) {
+  if (!is_initialized_) {
+    return;
+  }
+  ROS_ERROR("[ConeAggregator]: Did not receive a message on topic %s for %.2f seconds", topic_name.c_str(), (ros::Time::now() - last_msg_time).toSec());
+}
 //}
 
 }  // namespace compton_cone_generator
