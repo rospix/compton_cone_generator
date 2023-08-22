@@ -5,7 +5,7 @@
   <arg name="debug" default="false" />
   <arg name="standalone" default="true" />
 
-  <arg name="target_frame" default="$(arg uav_name)/gps_origin" />
+  <arg name="target_frame" default="$(arg uav_name)/world_origin" />
 
   <arg name="custom_config" default="" />
   <arg name="uav_names" default="" />
