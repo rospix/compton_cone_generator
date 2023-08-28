@@ -224,7 +224,6 @@ void ComptonConeGenerator::onInit() {
   shopts.autostart          = true;
   shopts.queue_size         = 10;
   shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
-  shopts.no_message_timeout = ros::Duration(10.0);
 
   sh_cluster_list_ = mrs_lib::SubscribeHandler<rad_msgs::ClusterList>(shopts, "cluster_list_in", &ComptonConeGenerator::callbackTimeout, this,
                                                                       &ComptonConeGenerator::callbackClusterList, this);

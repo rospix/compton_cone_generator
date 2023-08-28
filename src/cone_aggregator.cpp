@@ -108,7 +108,6 @@ void ConeAggregator::onInit() {
   shopts.autostart          = true;
   shopts.queue_size         = 10;
   shopts.transport_hints    = ros::TransportHints().tcpNoDelay();
-  shopts.no_message_timeout = ros::Duration(10.0);
 
   for (int i = 0; i < int(_uav_names_.size()); i++) {
 
