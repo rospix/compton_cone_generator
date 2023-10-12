@@ -42,7 +42,7 @@ namespace compton_cone_generator
 {
 
 int _coincidence_matching_method_;
-bool _generate_cones_from_both_sides_ = false;
+bool _generate_cones_from_both_sides_;
 /* ComptonConeGenerator //{ */
 
 class ComptonConeGenerator : public nodelet::Nodelet {
@@ -296,7 +296,6 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterList::Cons
 
       double time_diff = (events[it2].cluster->toa - events[it].cluster->toa);
 
-      ROS_WARN("time diff:  %.2f ns", time_diff);
       if (_coincidence_matching_method_ == 0) {
 
         if (time_diff <= _time_constant_) {  // coincidence
@@ -359,206 +358,197 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterList::Cons
     ROS_INFO("[SingleEvent]: 2-cluster coincidence, cl stamp: %f, id1: %lu, id2: %lu, toa1: %f, toa2: %f, dt: %.2f ns", msg->header.stamp.toSec(),
              coincidences[0].cluster->id, coincidences[1].cluster->id, coincidences[0].cluster->toa, coincidences[1].cluster->toa, time_diff);
 
-
-
-
-
-
-    if (_plotting_clear_cones_) {
-      batch_vizualizer_.clearBuffers();
-      batch_vizualizer_.clearVisuals();
-    }
-
-    std::vector<std::pair<SingleEvent, SingleEvent>> electron_photon_pairs;
+    std::vector<std::pair<SingleEvent, SingleEvent> electron_photon_pairs;
 
     if(_generate_cones_from_both_sides_){
       //generate both cones
     
-      std::pair<SingleEvent, SingleEvent> new_pair1;
-      new_pair1.first = coincidences[0];
-      new_pair1.second = coincidences[1];
-      electron_photon_pairs.push_back(new_pair1);
+      std::pair<SingleEvent, SingleEvent> new_pair;
+      new_pair[0] = coincidences[0];
+      new_pair[1] = coincidences[1];
+      electron_photon_pairs.push_back(new_pair);
           
-      std::pair<SingleEvent, SingleEvent> new_pair2;
-      new_pair2.first = coincidences[1];
-      new_pair2.second = coincidences[0];
-      electron_photon_pairs.push_back(new_pair2);
+      std::pair<SingleEvent, SingleEvent> new_pair;
+      new_pair[0] = coincidences[1];
+      new_pair[1] = coincidences[0]
+      electron_photon_pairs.push_back(new_pair);
 
     }else{
       //generate only one cone (original method)
-      std::pair<SingleEvent, SingleEvent> new_pair;
       if (time_diff > 0) {
-        new_pair.first = coincidences[1];
-        new_pair.second   = coincidences[0];
+        electron = coincidences[1];
+        photon   = coincidences[0];
       } else {
-        new_pair.first = coincidences[0];
-        new_pair.second = coincidences[1];
+        electron = coincidences[0];
+        photon   = coincidences[1];
       }
-      electron_photon_pairs.push_back(new_pair);
     }
 
-    for (int i = 0; i < electron_photon_pairs.size(); i++){
+
+
+    if (time_diff > 0) {
+      electron = coincidences[1];
+      photon   = coincidences[0];
+    } else {
+      electron = coincidences[0];
+      photon   = coincidences[1];
+    }
+   
     
-      SingleEvent electron = electron_photon_pairs.at(i).first;
-      SingleEvent photon = electron_photon_pairs.at(i).second;
+    SingleEvent electron;
+    SingleEvent photon;
+    if (_min_pixel_distance_enabled_ &&/*//{*/
+        sqrt(pow(photon.cluster->x - electron.cluster->x, 2) + pow(photon.cluster->y - electron.cluster->y, 2)) < _min_pixel_distance_) {
+
+      ROS_WARN("[SingleEvent]: events are too close");
+      continue;
+    }
+
+    if (_prior_enabled_ &&
+        (fabs((photon.cluster->energy + electron.cluster->energy) - _prior_energy_) > (photon.cluster->energy + electron.cluster->energy) * 0.2)) {
+      ROS_WARN("[SingleEvent]: energies don't fit, e1 = %.2f, e2 = %.2f", photon.cluster->energy, electron.cluster->energy);
+      continue;
+    }
+
+    if (_prior_edges_enabled_ && (photon.cluster->energy < _prior_photon_edge_ || electron.cluster->energy > _prior_electron_edge_)) {
+      ROS_INFO("[SingleEvent]: edge energy violated");
+      continue;
+    }
+
+    ROS_INFO("[SingleEvent]: events fit, photon = %.2f, electron = %.2f", photon.cluster->energy, electron.cluster->energy);
+
+    {  // coincidences will be republished as a new cluster list
+      rad_msgs::ClusterList cluster_list_coincidences;
+      cluster_list_coincidences.header = msg->header;
+
+      cluster_list_coincidences.clusters.push_back(*coincidences[0].cluster);
+      cluster_list_coincidences.clusters.push_back(*coincidences[1].cluster);
+
+      publisher_coincidences_.publish(cluster_list_coincidences);
+    }
+
+    double z_distance = (time_diff / _time_constant_) * _sensor_thickness_;
+
+    // calculate the cone direction
+    Eigen::Vector3d cone_direction = Eigen::Vector3d(electron.cluster->x * _pixel_pitch_ - photon.cluster->x * _pixel_pitch_,
+                                                     electron.cluster->y * _pixel_pitch_ - photon.cluster->y * _pixel_pitch_, z_distance);
+
+    cone_direction.normalize();
+
+    // calculate the scattering angle
+    auto theta_estimate = getComptonAngle(electron.cluster->energy, photon.cluster->energy);
+
+    if (theta_estimate) {
+
+      double theta = fabs(theta_estimate.value());
+
+      /* cone_direction[0] = 1; */
+      /* cone_direction[1] = 0; */
+      /* cone_direction[2] = 0; */
+      /* cone_direction.normalize(); */
+
+      if (theta > M_PI / 2.0) {
+        theta = M_PI - theta;
+        cone_direction *= -1.0;
+      }
+
+      rad_msgs::Cone cone;
+
+      cone.header.stamp    = electron.cluster->stamp;
+      cone.header.frame_id = _world_frame_;  // TODO fix
+
+      // transform the cone direction to the world frame
+      geometry_msgs::Vector3Stamped cone_direction_camera;
+
+      cone_direction_camera.header.stamp    = electron.cluster->stamp;
+      cone_direction_camera.header.frame_id = msg->header.frame_id;
+      cone_direction_camera.vector.x        = cone_direction[0];
+      cone_direction_camera.vector.y        = cone_direction[1];
+      cone_direction_camera.vector.z        = cone_direction[2];
+
+      {
+        auto result = transformer_->transformSingle(cone_direction_camera, _world_frame_);
+
+        if (result) {
+
+          cone.direction.x = result.value().vector.x;
+          cone.direction.y = result.value().vector.y;
+          cone.direction.z = result.value().vector.z;
+
+        } else {
+
+          ROS_ERROR("[ComptonConeGenerator]: could not transform cone direction (frame: %s, stamp: %f) to the world frame (%s)",
+                    cone_direction_camera.header.frame_id.c_str(), cone_direction_camera.header.stamp.toSec(), _world_frame_.c_str());
+          continue;
+        }
+      }
+
+      geometry_msgs::PoseStamped cone_pose_camera;
+
+      cone_pose_camera.header.stamp    = electron.cluster->stamp;
+      cone_pose_camera.header.frame_id = msg->header.frame_id;
+      cone_pose_camera.pose.position.x = 0;
+      cone_pose_camera.pose.position.y = 0;
+      cone_pose_camera.pose.position.z = 0;
+
+      Eigen::Vector3d e1                = Eigen::Vector3d(1, 0, 0);
+      Eigen::Vector3d axis              = e1.cross(cone_direction);
+      double          angle             = mrs_lib::geometry::angleBetween(e1, cone_direction);
+      cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
+
+      {
+        auto result = transformer_->transformSingle(cone_pose_camera, _world_frame_);
+
+        if (result) {
+
+          cone.pose.position.x = result.value().pose.position.x;
+          cone.pose.position.y = result.value().pose.position.y;
+          cone.pose.position.z = result.value().pose.position.z;
+
+          cone.pose.orientation = result.value().pose.orientation;
+
+        } else {
+
+          ROS_ERROR("[ComptonConeGenerator]: could not transform cone position to the world frame");
+          continue;
+        }
+      }
+
+      cone.angle = theta;
+
+      mrs_lib::geometry::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta,
+                                       cos(cone.angle) * _plotting_cone_height_, Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
+
+      if (_plotting_clear_cones_) {
+        batch_vizualizer_.clearBuffers();
+        batch_vizualizer_.clearVisuals();
+      }
+
+      batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30);
+      batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
      
-      ROS_INFO("[Options for loop]: processing option %d", i);
+      // plot axis of the cone
+      mrs_lib::geometry::Ray ray(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z),Eigen::Vector3d(cone.pose.position.x+cone.direction.x*5, cone.pose.position.y+cone.direction.y*5, cone.pose.position.z+cone.direction.z*5));
 
-      if (_min_pixel_distance_enabled_ &&/*//{*/
-          sqrt(pow(photon.cluster->x - electron.cluster->x, 2) + pow(photon.cluster->y - electron.cluster->y, 2)) < _min_pixel_distance_) {
+      batch_vizualizer_.addRay(ray, 0.5, 0.5, 0.5, 1.0, ros::Duration(10));
 
-        ROS_WARN("[SingleEvent]: events are too close");
-        continue;
-      }
+      // mirror the cone
+      /* mrs_lib::geometry::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
+      /*                        Eigen::Vector3d(-cone.direction.x, -cone.direction.y, -cone.direction.z)); */
+      /* batch_vizualizer_.addCone(cone_vis2, 0.2, 0.8, 0.5, 0.3, true, false, 30); */
 
-      if (_prior_enabled_ &&
-          (fabs((photon.cluster->energy + electron.cluster->energy) - _prior_energy_) > (photon.cluster->energy + electron.cluster->energy) * 0.2)) {
-        ROS_WARN("[SingleEvent]: energies don't fit, e1 = %.2f, e2 = %.2f", photon.cluster->energy, electron.cluster->energy);
-        continue;
-      }
+      batch_vizualizer_.publish();
 
-      if (_prior_edges_enabled_ && (photon.cluster->energy < _prior_photon_edge_ || electron.cluster->energy > _prior_electron_edge_)) {
-        ROS_INFO("[SingleEvent]: edge energy violated");
-        continue;
-      }
+      publisher_cones_.publish(cone);
 
-      ROS_INFO("[SingleEvent]: events fit, photon = %.2f, electron = %.2f", photon.cluster->energy, electron.cluster->energy);
+      ros::Duration(1.0).sleep();
 
-      {  // coincidences will be republished as a new cluster list
-        rad_msgs::ClusterList cluster_list_coincidences;
-        cluster_list_coincidences.header = msg->header;
-
-        cluster_list_coincidences.clusters.push_back(*coincidences[0].cluster);
-        cluster_list_coincidences.clusters.push_back(*coincidences[1].cluster);
-
-        publisher_coincidences_.publish(cluster_list_coincidences);
-      }
-      double z_distance = 0;
-      if(_generate_cones_from_both_sides_){
-        time_diff = electron.cluster->toa - photon.cluster->toa;
-        z_distance = (time_diff / _time_constant_) * _sensor_thickness_;
-      }else{
-        z_distance = (time_diff / _time_constant_) * _sensor_thickness_;
-      }
-      // calculate the cone direction
-      Eigen::Vector3d cone_direction = Eigen::Vector3d(electron.cluster->x * _pixel_pitch_ - photon.cluster->x * _pixel_pitch_,
-                                                       electron.cluster->y * _pixel_pitch_ - photon.cluster->y * _pixel_pitch_, z_distance);
-
-      cone_direction.normalize();
-
-      // calculate the scattering angle
-      auto theta_estimate = getComptonAngle(electron.cluster->energy, photon.cluster->energy);
-
-      if (theta_estimate) {
-
-        double theta = fabs(theta_estimate.value());
-        ROS_INFO("    [SingleEvent]: theta = %.2f deg", theta*180/M_PI);
-
-        /* cone_direction[0] = 1; */
-        /* cone_direction[1] = 0; */
-        /* cone_direction[2] = 0; */
-        /* cone_direction.normalize(); */
-
-        if (theta > M_PI / 2.0) {
-          theta = M_PI - theta;
-          cone_direction *= -1.0;
-        }
-
-        rad_msgs::Cone cone;
-
-        cone.header.stamp    = electron.cluster->stamp;
-        cone.header.frame_id = _world_frame_;  // TODO fix
-
-        // transform the cone direction to the world frame
-        geometry_msgs::Vector3Stamped cone_direction_camera;
-
-        cone_direction_camera.header.stamp    = electron.cluster->stamp;
-        cone_direction_camera.header.frame_id = msg->header.frame_id;
-        cone_direction_camera.vector.x        = cone_direction[0];
-        cone_direction_camera.vector.y        = cone_direction[1];
-        cone_direction_camera.vector.z        = cone_direction[2];
-
-        {
-          auto result = transformer_->transformSingle(cone_direction_camera, _world_frame_);
-
-          if (result) {
-
-            cone.direction.x = result.value().vector.x;
-            cone.direction.y = result.value().vector.y;
-            cone.direction.z = result.value().vector.z;
-
-          } else {
-
-            ROS_ERROR("[ComptonConeGenerator]: could not transform cone direction (frame: %s, stamp: %f) to the world frame (%s)",
-                      cone_direction_camera.header.frame_id.c_str(), cone_direction_camera.header.stamp.toSec(), _world_frame_.c_str());
-            continue;
-          }
-        }
-
-        geometry_msgs::PoseStamped cone_pose_camera;
-
-        cone_pose_camera.header.stamp    = electron.cluster->stamp;
-        cone_pose_camera.header.frame_id = msg->header.frame_id;
-        cone_pose_camera.pose.position.x = 0;
-        cone_pose_camera.pose.position.y = 0;
-        cone_pose_camera.pose.position.z = 0;
-
-        Eigen::Vector3d e1                = Eigen::Vector3d(1, 0, 0);
-        Eigen::Vector3d axis              = e1.cross(cone_direction);
-        double          angle             = mrs_lib::geometry::angleBetween(e1, cone_direction);
-        cone_pose_camera.pose.orientation = mrs_lib::AttitudeConverter(Eigen::AngleAxis<double>(angle, axis));
-
-        {
-          auto result = transformer_->transformSingle(cone_pose_camera, _world_frame_);
-
-          if (result) {
-
-            cone.pose.position.x = result.value().pose.position.x;
-            cone.pose.position.y = result.value().pose.position.y;
-            cone.pose.position.z = result.value().pose.position.z;
-
-            cone.pose.orientation = result.value().pose.orientation;
-
-          } else {
-
-            ROS_ERROR("[ComptonConeGenerator]: could not transform cone position to the world frame");
-            continue;
-          }
-        }
-
-        cone.angle = theta;
-
-        mrs_lib::geometry::Cone cone_vis(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta,
-                                         cos(cone.angle) * _plotting_cone_height_, Eigen::Vector3d(cone.direction.x, cone.direction.y, cone.direction.z));
-
-
-        batch_vizualizer_.addCone(cone_vis, 0.3, 0.8, 0.5, 0.6, true, false, 30);
-        batch_vizualizer_.addCone(cone_vis, 0.0, 0.0, 0.0, 0.3, false, false, 30);
-       
-        // plot axis of the cone
-        mrs_lib::geometry::Ray ray(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z),Eigen::Vector3d(cone.pose.position.x+cone.direction.x*5, cone.pose.position.y+cone.direction.y*5, cone.pose.position.z+cone.direction.z*5));
-
-        batch_vizualizer_.addRay(ray, 0.5, 0.5, 0.5, 1.0, ros::Duration(10));
-
-        // mirror the cone
-        /* mrs_lib::geometry::Cone cone_vis2(Eigen::Vector3d(cone.pose.position.x, cone.pose.position.y, cone.pose.position.z), theta, 10.0, */
-        /*                        Eigen::Vector3d(-cone.direction.x, -cone.direction.y, -cone.direction.z)); */
-        /* batch_vizualizer_.addCone(cone_vis2, 0.2, 0.8, 0.5, 0.3, true, false, 30); */
-
-        publisher_cones_.publish(cone);
-
-        // mirror the cone
-        /* cone.direction.x *= -1; */
-        /* cone.direction.y *= -1; */
-        /* cone.direction.z *= -1; */
-        /* publisher_cones_.publish(cone); */
-      }/*//}*/
-      
-    }
-
-    batch_vizualizer_.publish();
-    ros::Duration(1.0).sleep();
-    
+      // mirror the cone
+      /* cone.direction.x *= -1; */
+      /* cone.direction.y *= -1; */
+      /* cone.direction.z *= -1; */
+      /* publisher_cones_.publish(cone); */
+    }/*//}*/
   }
 }
 

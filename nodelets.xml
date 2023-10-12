@@ -4,6 +4,12 @@
   </class>
 </library>
 
+<library path="lib/libComptonConeGenerator">
+  <class name="experimental_compton_cone_generator/ComptonConeGenerator" type="compton_cone_generator::ComptonConeGenerator" base_class_type="nodelet::Nodelet">
+    <description>ExperimentalComptonConeGenerator nodelet</description>
+  </class>
+</library>
+
 <library path="lib/libConeAggregator">
   <class name="compton_cone_generator/ConeAggregator" type="compton_cone_generator::ConeAggregator" base_class_type="nodelet::Nodelet">
     <description>Cone Aggregator nodelet</description>

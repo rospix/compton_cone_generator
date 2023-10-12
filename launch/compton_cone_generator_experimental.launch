@@ -8,8 +8,6 @@
   <arg name="standalone" default="true" />
 
   <arg name="custom_config" default="" />
-  
-  <arg name="generate_cones_from_both_sides" default="false" />
 
   <arg     if="$(arg debug)" name="launch_prefix" value="debug_roslaunch" />
   <arg unless="$(arg debug)" name="launch_prefix" value="" />
@@ -21,7 +19,7 @@
 
   <group ns="$(arg uav_name)">
 
-    <node name="compton_cone_generator" pkg="nodelet" type="nodelet" args="standalone compton_cone_generator/ComptonConeGenerator" output="screen" launch-prefix="$(arg launch_prefix)">
+    <node name="compton_cone_generator" pkg="nodelet" type="nodelet" args="standalone experimental_compton_cone_generator/ComptonConeGenerator" output="screen" launch-prefix="$(arg launch_prefix)">
 
       <rosparam file="$(find compton_cone_generator)/config/compton_cone_generator.yaml" command="load" />
 
@@ -30,7 +28,6 @@
       <param name="uav_name" value="$(arg uav_name)" />
       <param name="world_frame" value="$(arg world_frame)" />
 
-      <param name="generate_cones_from_both_sides" value= "$(arg generate_cones_from_both_sides)"/>
       <!-- subscribed topics -->
       <remap from="~cluster_list_in" to="compton_camera_front/cluster_list" />
       <remap from="~mavros_gps_in" to="mavros/global_position/global" />
