@@ -32,7 +32,7 @@
 
       <param name="generate_cones_from_both_sides" value= "$(arg generate_cones_from_both_sides)"/>
       <!-- subscribed topics -->
-      <remap from="~cluster_list_in" to="compton_camera_front/cluster_list" />
+      <remap from="~cluster_list_in" to="rospix3/cluster_list" />
       <remap from="~mavros_gps_in" to="mavros/global_position/global" />
 
       <!-- published topics -->
