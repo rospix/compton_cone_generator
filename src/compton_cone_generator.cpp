@@ -374,6 +374,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterList::Cons
     if(_generate_cones_from_both_sides_){
       //generate both cones
     
+      ROS_WARN_THROTTLE(1.0, "GENERATING CONES FROM BOTH SIDES");
       std::pair<SingleEvent, SingleEvent> new_pair1;
       new_pair1.first = coincidences[0];
       new_pair1.second = coincidences[1];
@@ -385,6 +386,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterList::Cons
       electron_photon_pairs.push_back(new_pair2);
 
     }else{
+      ROS_INFO_THROTTLE(1.0, "GENERATING CONES just from one side");
       //generate only one cone (original method)
       std::pair<SingleEvent, SingleEvent> new_pair;
       if (time_diff > 0) {
