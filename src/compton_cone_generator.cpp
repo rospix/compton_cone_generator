@@ -559,7 +559,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterList::Cons
     }
 
     batch_vizualizer_.publish();
-    ros::Duration(1.0).sleep();
+    //tros::Duration(1.0).sleep();
     
   }
 }

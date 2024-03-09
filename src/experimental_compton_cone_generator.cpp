@@ -541,7 +541,7 @@ void ComptonConeGenerator::callbackClusterList(const rad_msgs::ClusterList::Cons
 
       publisher_cones_.publish(cone);
 
-      ros::Duration(1.0).sleep();
+      //ros::Duration(1.0).sleep();
 
       // mirror the cone
       /* cone.direction.x *= -1; */
